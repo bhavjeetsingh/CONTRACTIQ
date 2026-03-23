@@ -1,4 +1,6 @@
 import os
+from src.document_chat.hybrid_retrieval import ContractRAG
+from src.cache.redis_cache import cache
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -169,7 +171,7 @@ async def compare_documents(
                      act_file=actual.filename)
         raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
 
-# ---------- CHAT: INDEX ----------
+# ---------- CHAT: INDEX (Hybrid RAG) ----------
 @app.post("/chat/index")
 async def chat_build_index(
     files: List[UploadFile] = File(...),
@@ -178,65 +180,62 @@ async def chat_build_index(
     chunk_size: int = Form(1000),
     chunk_overlap: int = Form(200),
     k: int = Form(5),
+    use_parent_retriever: bool = Form(False),
     current_user: TokenData = Depends(get_current_user)
 ) -> Any:
     try:
-        log.info(f"Indexing chat session. Session ID: {session_id}, Files: {[f.filename for f in files]}")
-        
-        # Validate all files before processing
-        unsupported_files = []
-        supported_formats = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-        
-        for file in files:
-            file_ext = Path(file.filename or "").suffix.lower()
-            if file_ext not in SUPPORTED_EXTENSIONS:
-                unsupported_files.append(f"{file.filename} ({file_ext})")
-        
-        if unsupported_files:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file types found: {'; '.join(unsupported_files)}. Supported formats: {supported_formats}"
-            )
-        
-        if not files:
-            raise HTTPException(status_code=400, detail="No files provided for indexing")
-        
+        log.info(f"Indexing session. Files: {[f.filename for f in files]}")
         wrapped = [FastAPIFileAdapter(f) for f in files]
-        
-        # Create ChatIngestor instance
+ 
         ci = ChatIngestor(
             temp_base=UPLOAD_BASE,
             faiss_base=FAISS_BASE,
             use_session_dirs=use_session_dirs,
             session_id=session_id or None,
         )
-        
-        # Build retriever (note: method name might need fixing if it's actually build_retriever)
-        retriever = ci.built_retriver(
-            wrapped, 
-            chunk_size=chunk_size, 
-            chunk_overlap=chunk_overlap, 
-            k=k
+ 
+        paths = ci.save_files(wrapped)
+        docs = ci.load_documents(paths)
+ 
+        faiss_dir = os.path.join(FAISS_BASE, ci.session_id) if use_session_dirs else FAISS_BASE
+ 
+        rag = ContractRAG(
+            session_id=ci.session_id,
+            use_parent_retriever=use_parent_retriever,
+            k=k,
         )
-        
-        log.info(f"Index created successfully for session: {ci.session_id}")
+        rag.build(docs, faiss_dir=faiss_dir)
+ 
+        # Store in app state (in-memory)
+        app.state.rag_sessions = getattr(app.state, "rag_sessions", {})
+        app.state.rag_sessions[ci.session_id] = rag
+ 
+        # Store session metadata in Redis (survives restarts)
+        cache.store_rag_session(ci.session_id, {
+            "faiss_dir": faiss_dir,
+            "k": k,
+            "use_parent_retriever": use_parent_retriever,
+            "files": [f.filename for f in files],
+            "user": current_user.email,
+        })
+ 
+        # Invalidate any old cached responses for this session
+        cache.invalidate_session(ci.session_id)
+ 
+        log.info(f"Hybrid RAG index built for session: {ci.session_id}")
         return {
-            "session_id": ci.session_id, 
-            "k": k, 
-            "use_session_dirs": use_session_dirs,
+            "session_id": ci.session_id,
+            "k": k,
+            "retriever_type": "parent" if use_parent_retriever else "hybrid",
             "files_indexed": len(files),
-            "chunk_size": chunk_size,
-            "chunk_overlap": chunk_overlap
+            "cache_status": "active" if cache.is_available else "disabled",
         }
-        
     except HTTPException:
         raise
     except Exception as e:
-        log.exception("Chat index building failed", 
-                     files=[f.filename for f in files])
-        raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
-
-# ---------- CHAT: QUERY ----------
+        log.exception("Chat index building failed")
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
+# ---------- CHAT: QUERY (Hybrid RAG) ----------
 @app.post("/chat/query")
 async def chat_query(
     question: str = Form(...),
@@ -246,39 +245,83 @@ async def chat_query(
     current_user: TokenData = Depends(get_current_user)
 ) -> Any:
     try:
-        log.info(f"Received chat query: '{question}' | session: {session_id}")
-        
-        if not question or not question.strip():
-            raise HTTPException(status_code=400, detail="Question cannot be empty")
-        
+        log.info(f"Chat query: '{question}' | session: {session_id}")
+ 
         if use_session_dirs and not session_id:
-            raise HTTPException(status_code=400, detail="session_id is required when use_session_dirs=True")
-
-        index_dir = os.path.join(FAISS_BASE, session_id) if use_session_dirs else FAISS_BASE
-        if not os.path.isdir(index_dir):
-            raise HTTPException(status_code=404, detail=f"FAISS index not found at: {index_dir}")
-
-        rag = ConversationalRAG(session_id=session_id)
-        rag.load_retriever_from_faiss(index_dir, k=k, index_name=FAISS_INDEX_NAME)
-        response = rag.invoke(question, chat_history=[])
-        log.info("Chat query handled successfully.", 
-                question_length=len(question),
-                response_length=len(str(response)))
-
-        return {
-            "answer": response,
-            "session_id": session_id,
-            "k": k,
-            "engine": "LCEL-RAG",
-            "question": question
-        }
-        
+            raise HTTPException(status_code=400, detail="session_id required")
+ 
+        # --- Check cache first ---
+        cached = cache.get(session_id, question, "hybrid")
+        if cached:
+            log.info("Returning cached response", session_id=session_id)
+            cached["from_cache"] = True
+            return cached
+ 
+        # --- Get RAG from app state ---
+        rag_sessions = getattr(app.state, "rag_sessions", {})
+        rag = rag_sessions.get(session_id)
+ 
+        # --- Rebuild from Redis session metadata if app restarted ---
+        if rag is None:
+            session_meta = cache.get_rag_session(session_id)
+ 
+            if session_meta:
+                log.info(f"Rebuilding RAG from Redis session metadata: {session_id}")
+                rag = ContractRAG(
+                    session_id=session_id,
+                    use_parent_retriever=session_meta.get("use_parent_retriever", False),
+                    k=session_meta.get("k", k),
+                )
+                faiss_dir = session_meta.get("faiss_dir")
+                if faiss_dir and os.path.isdir(faiss_dir):
+                    # Rebuild from saved FAISS index
+                    from langchain_community.vectorstores import FAISS
+                    from utils.model_loader import ModelLoader
+                    loader = ModelLoader()
+                    embeddings = loader.load_embeddings()
+                    vs = FAISS.load_local(
+                        faiss_dir,
+                        embeddings=embeddings,
+                        allow_dangerous_deserialization=True,
+                    )
+                    # Use basic retriever as fallback when rebuilding
+                    rag_fallback = ConversationalRAG(session_id=session_id)
+                    rag_fallback.load_retriever_from_faiss(
+                        faiss_dir, k=k, index_name=FAISS_INDEX_NAME
+                    )
+                    response = rag_fallback.invoke(question, chat_history=[])
+                    result = {
+                        "answer": response,
+                        "session_id": session_id,
+                        "retriever_type": "basic-rebuild",
+                        "from_cache": False,
+                    }
+                    # Cache the rebuilt response
+                    cache.set(result, session_id, question, "hybrid")
+                    return result
+ 
+            # No session found at all
+            index_dir = os.path.join(FAISS_BASE, session_id) if use_session_dirs else FAISS_BASE
+            if not os.path.isdir(index_dir):
+                raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+ 
+        # --- Invoke hybrid RAG ---
+        result = rag.invoke(question, chat_history=[])
+        result["from_cache"] = False
+ 
+        # --- Store response in cache ---
+        cache.set(result, session_id, question, "hybrid")
+ 
+        log.info("Hybrid RAG query handled successfully")
+        return result
+ 
     except HTTPException:
         raise
     except Exception as e:
-        log.exception("Chat query failed", question=question, session=session_id)
-        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
-
+        log.exception("Chat query failed")
+        raise HTTPException(status_code=500, detail=f"Query failed: {e}")
+ 
+    
 # ---------- UTILITY ENDPOINTS ----------
 
 @app.get("/sessions")
@@ -324,6 +367,11 @@ async def delete_session(session_id: str) -> Dict[str, str]:
         log.exception("Failed to delete session", session_id=session_id)
         raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
 
+# cache stats for monitoring
+@app.get("/cache/stats")
+def cache_stats(current_user: TokenData = Depends(get_current_user)):
+    """Get Redis cache statistics — useful for monitoring in production."""
+    return cache.get_stats()
 # command for executing the FastAPI app
 # uvicorn api.main:app --port 8080 --reload    
 # uvicorn api.main:app --host 0.0.0.0 --port 8080 --reload
