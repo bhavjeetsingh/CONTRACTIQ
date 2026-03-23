@@ -1,0 +1,31 @@
+Steps for running the App over the ECS:
+
+
+1. pull my latest entire code
+1.1 you will updated githubaction/workflow folder
+1.2 you will get updated utils/model_loader.py
+2. AWS Account
+3. AWS IAM User
+3.1 fetch the credential from the IAM USER: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+3.2 these credential keep inside your GitHub secretes
+4. AWS Secrete Manager: keep your API keys over there
+5. Setup your ECR
+6. Create Cluster on your ECS
+7. add the policy(incline_policy) either inside your IAM user or inside the role
+7.1 these is a custom policy for giving correct permission between services 
+7.2 check the code folder there i have given incline policy json file
+7.3 there is two policy
+7.4 first create first policy then create second policy with the appropriate given name and the exact json 
+8. go inside the EC2 and add your inbould details
+open EC2-> left hand side check with the security group-> click on security group id then add the inbound rule
+TYPE Custom TCP TCP8080 ANYWHERE IPV4 0.0.0.0/0
+9. for accessing the application 
+ECS CLuster->Service->Task->PublicIP
+if you are not able to get public IP there
+then click on the ENI id there check with your public IPV4 Address
+
+for executing the application this should be running on your browswer
+http:/<your_public_ip>:8080
+
+10 how to watch the logs
+search for cloud watch->click on log groups --> check with your running task id --> then open the log for the same task id

@@ -1,0 +1,31 @@
+{
+    "name of first policy":"AllowECSLogs",
+    "value of the first policy":{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "Statement1",
+			"Effect": "Allow",
+			"Action": [
+				"logs:CreateLogGroup",
+				"logs:CreateLogStream",
+				"logs:PutLogEvents"
+			],
+			"Resource": "*"
+		}
+	]
+},
+    "name of the second policy":"AllowSecretsAccess",
+    "value of the second policy":{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "Statement1",
+			"Effect": "Allow",
+			"Action": "secretsmanager:GetSecretValue",
+			"Resource": "arn:aws:secretsmanager:us-east-1:321364015362:secret:apikeyliveclass-6IdnNj"
+		}
+	]
+}
+
+}
