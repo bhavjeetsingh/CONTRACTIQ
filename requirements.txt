@@ -22,4 +22,6 @@ passlib[bcrypt]==1.7.4
 slowapi==0.1.9
 redis==5.0.1
 celery==5.3.6
+ragas==0.2.8
+datasets==2.18.0
 -e .

@@ -17,6 +17,7 @@ from src.document_ingestion.data_ingestion import (
     DocumentComparator,
     ChatIngestor,
 )
+from src.eval.ragas_evaluator import RAGASEvaluator, ContractEvalSuite
 from constants import SUPPORTED_EXTENSIONS
 from src.document_analyzer.data_analysis import DocumentAnalyzer
 from src.document_compare.document_comparator import DocumentComparatorLLM
@@ -443,7 +444,65 @@ async def chat_stream(
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
-
+# evaluation endpoint of ragas
+@app.post("/eval/score")
+@limiter.limit("3/minute")
+async def evaluate_rag(
+    request: Request,
+    session_id: str = Form(...),
+    current_user: TokenData = Depends(get_current_user),
+) -> Any:
+    """
+    Run RAGAS evaluation on an existing RAG session.
+    Returns faithfulness, answer relevancy, context precision scores.
+    """
+    try:
+        log.info("Starting RAGAS evaluation", session_id=session_id)
+ 
+        rag_sessions = getattr(app.state, "rag_sessions", {})
+        rag = rag_sessions.get(session_id)
+ 
+        if rag is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session not found: {session_id}. Index documents first."
+            )
+ 
+        scores = ContractEvalSuite.run_eval_with_rag(rag)
+ 
+        log.info("RAGAS evaluation complete", scores=scores)
+        return {
+            "session_id": session_id,
+            "scores": scores,
+            "interpretation": {
+                "faithfulness": "How grounded the answers are in retrieved context",
+                "answer_relevancy": "How well answers address the questions",
+                "context_precision": "How relevant the retrieved chunks are",
+                "context_recall": "How much relevant context was retrieved",
+            }
+        }
+ 
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Evaluation failed")
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}")
+    
+# eval scores endpoint
+@app.get("/eval/latest")
+def get_latest_eval() -> Any:
+    """Get the most recent evaluation scores — shown in README."""
+    try:
+        from src.eval.ragas_evaluator import RAGASEvaluator
+        evaluator = RAGASEvaluator()
+        results = evaluator.load_latest_results()
+        if results is None:
+            return {"message": "No evaluation results yet. Run /eval/score first."}
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    
 # command for executing the FastAPI app
 # uvicorn api.main:app --port 8080 --reload    
 # uvicorn api.main:app --host 0.0.0.0 --port 8080 --reload
