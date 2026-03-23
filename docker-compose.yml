@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+
+  app:
+    build: .
+    container_name: contractiq-api
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./data:/app/data
+      - ./faiss_index:/app/faiss_index
+    depends_on:
+      - redis
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8080 --reload
+
+  redis:
+    image: redis:7-alpine
+    container_name: contractiq-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  celery_worker:
+    build: .
+    container_name: contractiq-celery
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./data:/app/data
+      - ./faiss_index:/app/faiss_index
+    depends_on:
+      - redis
+    command: celery -A src.tasks.celery_worker worker --loglevel=info
+
+volumes:
+  redis_data:
