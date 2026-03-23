@@ -11,7 +11,7 @@ from pathlib import Path
 from utils.rate_limiter import limiter, get_user_identifier
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-
+from src.document_chat.sse_streaming import router as stream_router
 from src.document_ingestion.data_ingestion import (
     DocHandler,
     DocumentComparator,
@@ -37,6 +37,7 @@ app = FastAPI(
     version="0.2",
     description="Universal Document Processing API - Supports PDF, DOCX, PPT, Excel, CSV, TXT, JSON, RTF"
 )
+app.include_router(stream_router)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -386,6 +387,63 @@ async def delete_session(session_id: str) -> Dict[str, str]:
 def cache_stats(current_user: TokenData = Depends(get_current_user)):
     """Get Redis cache statistics — useful for monitoring in production."""
     return cache.get_stats()
+
+
+# This is the streaming endpoint
+@router.post("/chat/stream")
+@limiter.limit("20/minute")
+async def chat_stream(
+    request: Request,
+    question: str = Form(...),
+    session_id: Optional[str] = Form(None),
+    k: int = Form(5),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    Stream LLM response token by token via Server-Sent Events.
+
+    Client usage (JavaScript):
+        const response = await fetch('/chat/stream', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer <token>' },
+            body: new FormData({ question, session_id })
+        });
+
+        const reader = response.body.getReader();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = new TextDecoder().decode(value);
+            const lines = text.split('\\n\\n');
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.token) displayToken(data.token);
+                    if (data.done) console.log('Stream complete');
+                }
+            }
+        }
+    """
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+
+    log.info("SSE stream started", session_id=session_id, question=question[:80])
+
+    return StreamingResponse(
+        stream_rag_response(
+            question=question,
+            session_id=session_id,
+            app_state=request.app.state,
+            k=k,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
 # command for executing the FastAPI app
 # uvicorn api.main:app --port 8080 --reload    
 # uvicorn api.main:app --host 0.0.0.0 --port 8080 --reload
