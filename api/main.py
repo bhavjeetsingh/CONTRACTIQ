@@ -8,6 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
+from utils.rate_limiter import limiter, get_user_identifier
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from src.document_ingestion.data_ingestion import (
     DocHandler,
@@ -34,6 +37,9 @@ app = FastAPI(
     version="0.2",
     description="Universal Document Processing API - Supports PDF, DOCX, PPT, Excel, CSV, TXT, JSON, RTF"
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -82,8 +88,10 @@ def get_supported_formats() -> Dict[str, Any]:
     }
 
 # ---------- ANALYZE ----------
+@limiter.limit("10/minute")
 @app.post("/analyze")
 async def analyze_document(
+    request: Request,
     file: UploadFile = File(...),
     current_user: TokenData = Depends(get_current_user)
 ) -> Any:
@@ -118,8 +126,10 @@ async def analyze_document(
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 # ---------- COMPARE ----------
+@limiter.limit("10/minute")
 @app.post("/compare")
 async def compare_documents(
+    request: Request,
     reference: UploadFile = File(...),
     actual: UploadFile = File(...),
     current_user: TokenData = Depends(get_current_user)
@@ -172,8 +182,10 @@ async def compare_documents(
         raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
 
 # ---------- CHAT: INDEX (Hybrid RAG) ----------
+@limiter.limit("5/minute")
 @app.post("/chat/index")
 async def chat_build_index(
+    request: Request,
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
     use_session_dirs: bool = Form(True),
@@ -236,8 +248,10 @@ async def chat_build_index(
         log.exception("Chat index building failed")
         raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
 # ---------- CHAT: QUERY (Hybrid RAG) ----------
+@limiter.limit("20/minute")
 @app.post("/chat/query")
 async def chat_query(
+    request: Request,
     question: str = Form(...),
     session_id: Optional[str] = Form(None),
     use_session_dirs: bool = Form(True),
