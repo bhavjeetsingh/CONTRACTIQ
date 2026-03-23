@@ -41,4 +41,4 @@ class DocumentComparatorLLM:
             return df
         except Exception as e:
             log.error("Error formatting response into DataFrame", error=str(e))
-            DocumentPortalException("Error formatting response", sys)
+            raise DocumentPortalException("Error formatting response", sys)
