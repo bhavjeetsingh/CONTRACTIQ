@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional, Any, Dict
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,10 @@ from src.document_compare.document_comparator import DocumentComparatorLLM
 from src.document_chat.retrieval import ConversationalRAG
 from utils.document_ops import FastAPIFileAdapter, read_pdf_via_handler
 from logger import GLOBAL_LOGGER as log
+from src.auth.jwt_handler import (
+    UserCreate, Token, register_user, 
+    login_user, get_current_user, TokenData
+)
 
 FAISS_BASE = os.getenv("FAISS_BASE", "faiss_index")
 UPLOAD_BASE = os.getenv("UPLOAD_BASE", "data")
@@ -52,6 +56,13 @@ async def serve_ui(request: Request):
 def health() -> Dict[str, str]:
     log.info("Health check passed.")
     return {"status": "ok", "service": "document-portal"}
+@app.post("/auth/register")
+def register(user: UserCreate):
+    return register_user(user.email, user.password)
+
+@app.post("/auth/login", response_model=Token)
+def login(user: UserCreate):
+    return login_user(user.email, user.password)
 
 @app.get("/supported-formats")
 def get_supported_formats() -> Dict[str, Any]:
@@ -70,7 +81,10 @@ def get_supported_formats() -> Dict[str, Any]:
 
 # ---------- ANALYZE ----------
 @app.post("/analyze")
-async def analyze_document(file: UploadFile = File(...)) -> Any:
+async def analyze_document(
+    file: UploadFile = File(...),
+    current_user: TokenData = Depends(get_current_user)
+) -> Any:
     try:
         log.info(f"Received file for analysis: {file.filename}")
         
@@ -103,7 +117,11 @@ async def analyze_document(file: UploadFile = File(...)) -> Any:
 
 # ---------- COMPARE ----------
 @app.post("/compare")
-async def compare_documents(reference: UploadFile = File(...), actual: UploadFile = File(...)) -> Any:
+async def compare_documents(
+    reference: UploadFile = File(...),
+    actual: UploadFile = File(...),
+    current_user: TokenData = Depends(get_current_user)
+) -> Any:
     try:
         log.info(f"Comparing files: {reference.filename} vs {actual.filename}")
         
@@ -160,6 +178,7 @@ async def chat_build_index(
     chunk_size: int = Form(1000),
     chunk_overlap: int = Form(200),
     k: int = Form(5),
+    current_user: TokenData = Depends(get_current_user)
 ) -> Any:
     try:
         log.info(f"Indexing chat session. Session ID: {session_id}, Files: {[f.filename for f in files]}")
@@ -224,6 +243,7 @@ async def chat_query(
     session_id: Optional[str] = Form(None),
     use_session_dirs: bool = Form(True),
     k: int = Form(5),
+    current_user: TokenData = Depends(get_current_user)
 ) -> Any:
     try:
         log.info(f"Received chat query: '{question}' | session: {session_id}")

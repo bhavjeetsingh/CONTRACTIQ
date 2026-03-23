@@ -13,11 +13,10 @@ python-multipart==0.0.20
 PyMuPDF==1.26.3
 structlog==25.4.0
 docx2txt==0.9
-ipykernel==6.30.0
 streamlit==1.47.1
 pytest==8.4.1
 pypdf==5.8.0
-cfn-lint
+
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 slowapi==0.1.9
