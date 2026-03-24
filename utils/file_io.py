@@ -7,9 +7,7 @@ from zoneinfo import ZoneInfo
 from typing import Iterable, List, Union
 from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
-
-# Import from the main data_ingestion module to maintain consistency
-from src.document_ingestion.data_ingestion import SUPPORTED_EXTENSIONS
+from constants import SUPPORTED_EXTENSIONS
 
 # ----------------------------- #
 # Helpers (file I/O + loading)  #

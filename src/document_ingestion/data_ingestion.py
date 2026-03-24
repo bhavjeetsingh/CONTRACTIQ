@@ -14,6 +14,7 @@ from langchain_community.vectorstores import FAISS
 from utils.model_loader import ModelLoader
 from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
+from constants import SUPPORTED_EXTENSIONS
 from utils.file_io import generate_session_id, save_uploaded_files
 from utils.document_ops import load_documents, concat_for_analysis, concat_for_comparison
 
@@ -38,9 +39,6 @@ try:
 except ImportError:
     EXCEL_AVAILABLE = False
     log.warning("openpyxl not available. Install with: pip install openpyxl")
-
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".ppt", ".pptx", 
-    ".xlsx", ".xls", ".csv", ".json", ".rtf"}
 
 class DocHandler:
     """
@@ -337,3 +335,146 @@ class DocHandler:
             
         except Exception as e:
             raise DocumentPortalException(f"Error reading RTF: {rtf_path}", e) from e
+
+
+class DocumentComparator:
+    """
+    Handles uploading and combining documents for comparison.
+    """
+    def __init__(self):
+        self.session_id = generate_session_id("compare")
+        self.ref_path = None
+        self.act_path = None
+        self.temp_dir = os.path.join(os.getcwd(), "data", "document_compare", self.session_id)
+        os.makedirs(self.temp_dir, exist_ok=True)
+        log.info("DocumentComparator initialized", session_id=self.session_id)
+
+    def save_uploaded_files(self, ref_file, act_file) -> tuple:
+        """
+        Save reference and actual files and return their paths.
+        
+        Args:
+            ref_file: Reference file (FastAPIFileAdapter or similar)
+            act_file: Actual file (FastAPIFileAdapter or similar)
+            
+        Returns:
+            Tuple of (ref_path, act_path)
+        """
+        try:
+            ref_path = os.path.join(self.temp_dir, ref_file.name.split('/')[-1])
+            act_path = os.path.join(self.temp_dir, act_file.name.split('/')[-1])
+            
+            with open(ref_path, 'wb') as f:
+                f.write(ref_file.read())
+            with open(act_path, 'wb') as f:
+                f.write(act_file.read())
+                
+            self.ref_path = ref_path
+            self.act_path = act_path
+            log.info("Files saved for comparison", ref=ref_path, act=act_path)
+            return ref_path, act_path
+            
+        except Exception as e:
+            log.exception("Failed to save files for comparison")
+            raise DocumentPortalException(f"Failed to save comparison files: {e}", e) from e
+
+    def combine_documents(self) -> str:
+        """
+        Read and combine both documents into a single string.
+        
+        Returns:
+            Combined text from both documents
+        """
+        try:
+            dh = DocHandler()
+            ref_text = dh.read_document(self.ref_path) if self.ref_path else ""
+            act_text = dh.read_document(self.act_path) if self.act_path else ""
+            
+            combined = concat_for_comparison(ref_text, act_text)
+            log.info("Documents combined for comparison", ref_len=len(ref_text), act_len=len(act_text))
+            return combined
+            
+        except Exception as e:
+            log.exception("Failed to combine documents")
+            raise DocumentPortalException(f"Failed to combine documents: {e}", e) from e
+
+
+class ChatIngestor:
+    """
+    Handles uploading and indexing documents for RAG chat sessions.
+    """
+    def __init__(
+        self,
+        temp_base: str = "data",
+        faiss_base: str = "faiss_index",
+        use_session_dirs: bool = True,
+        session_id: Optional[str] = None
+    ):
+        self.session_id = session_id or generate_session_id("session")
+        self.temp_base = temp_base
+        self.faiss_base = faiss_base
+        self.use_session_dirs = use_session_dirs
+        
+        if use_session_dirs:
+            self.temp_dir = os.path.join(temp_base, self.session_id)
+        else:
+            self.temp_dir = temp_base
+            
+        os.makedirs(self.temp_dir, exist_ok=True)
+        log.info("ChatIngestor initialized", session_id=self.session_id, temp_dir=self.temp_dir)
+
+    def save_files(self, uploaded_files: List) -> List[str]:
+        """
+        Save uploaded files and return their paths.
+        
+        Args:
+            uploaded_files: List of FastAPIFileAdapter or similar file objects
+            
+        Returns:
+            List of file paths
+        """
+        try:
+            saved_paths = []
+            for file in uploaded_files:
+                filename = file.name.split('/')[-1]
+                file_path = os.path.join(self.temp_dir, filename)
+                
+                with open(file_path, 'wb') as f:
+                    f.write(file.read())
+                    
+                saved_paths.append(file_path)
+                log.info("File saved for ingestion", path=file_path)
+                
+            return saved_paths
+            
+        except Exception as e:
+            log.exception("Failed to save files for ingestion")
+            raise DocumentPortalException(f"Failed to save files: {e}", e) from e
+
+    def load_documents(self, file_paths: List[str]) -> List[Document]:
+        """
+        Load documents from file paths using DocHandler.
+        
+        Args:
+            file_paths: List of file paths to load
+            
+        Returns:
+            List of LangChain Document objects
+        """
+        try:
+            all_docs = []
+            dh = DocHandler()
+            
+            for file_path in file_paths:
+                text = dh.read_document(file_path)
+                if text and text.strip():
+                    docs = load_documents(file_path, text)
+                    all_docs.extend(docs)
+                    log.info("Documents loaded", path=file_path, count=len(docs))
+                    
+            log.info("All documents loaded for session", session_id=self.session_id, total=len(all_docs))
+            return all_docs
+            
+        except Exception as e:
+            log.exception("Failed to load documents")
+            raise DocumentPortalException(f"Failed to load documents: {e}", e) from e

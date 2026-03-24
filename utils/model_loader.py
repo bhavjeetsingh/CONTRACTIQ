@@ -68,7 +68,7 @@ class ModelLoader:
 
     def load_embeddings(self):
         """
-        Load and return embedding model from Google Generative AI.
+        Load and return embedding model. Tries Google API first, falls back to HuggingFace.
         """
         try:
             model_name = self.config["embedding_model"]["model_name"]
@@ -76,8 +76,20 @@ class ModelLoader:
             return GoogleGenerativeAIEmbeddings(model=model_name,
                                                 google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY")) #type: ignore
         except Exception as e:
-            log.error("Error loading embedding model", error=str(e))
-            raise DocumentPortalException("Failed to load embedding model", sys)
+            log.warning("Google embedding failed, attempting HuggingFace fallback", error=str(e))
+            try:
+                from langchain_community.embeddings import HuggingFaceEmbeddings
+                log.info("Loading HuggingFace embedding model (fallback)")
+                # Use a lightweight model for faster inference
+                return HuggingFaceEmbeddings(
+                    model_name="all-MiniLM-L6-v2",
+                    model_kwargs={"device": "cpu"},
+                    encode_kwargs={"normalize_embeddings": True}
+                )
+            except Exception as hf_error:
+                log.error("Both Google and HuggingFace embedding models failed", 
+                         google_error=str(e), huggingface_error=str(hf_error))
+                raise DocumentPortalException("Failed to load any embedding model", sys)
 
     def load_llm(self):
         """
