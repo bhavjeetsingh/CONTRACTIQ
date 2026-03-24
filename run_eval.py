@@ -28,6 +28,7 @@ load_dotenv()
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from langchain_core.documents import Document
 from src.document_ingestion.data_ingestion import DocHandler, ChatIngestor
 from src.document_chat.hybrid_retrieval import ContractRAG
 from src.eval.ragas_evaluator import ContractEvalSuite
@@ -42,10 +43,6 @@ def run_eval(pdf_path: str):
     Args:
         pdf_path: Path to a contract PDF file
     """
-    print(f"\n ContractIQ — RAGAS Evaluation")
-    print(f"{'='*50}")
-    print(f"Document: {pdf_path}")
-    print(f"{'='*50}\n")
 
     # Step 1: Load and index document
     print("Step 1: Loading document...")
@@ -63,7 +60,6 @@ def run_eval(pdf_path: str):
 
     # Step 2: Build RAG pipeline
     print("\nStep 2: Building Hybrid RAG pipeline...")
-    from langchain.schema import Document
     docs = [Document(page_content=text, metadata={"source": pdf_path})]
 
     faiss_dir = "faiss_index/eval_session"

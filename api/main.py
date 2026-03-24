@@ -3,7 +3,7 @@ from src.document_chat.hybrid_retrieval import ContractRAG
 from src.cache.redis_cache import cache
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -11,7 +11,7 @@ from pathlib import Path
 from utils.rate_limiter import limiter, get_user_identifier
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from src.document_chat.sse_streaming import router as stream_router
+from src.document_chat.sse_streaming import router as stream_router, stream_rag_response
 from src.document_ingestion.data_ingestion import (
     DocHandler,
     DocumentComparator,
@@ -34,7 +34,7 @@ UPLOAD_BASE = os.getenv("UPLOAD_BASE", "data")
 FAISS_INDEX_NAME = os.getenv("FAISS_INDEX_NAME", "index")
 
 app = FastAPI(
-    title="Document Portal API", 
+    title="ContractIQ API", 
     version="0.2",
     description="Universal Document Processing API - Supports PDF, DOCX, PPT, Excel, CSV, TXT, JSON, RTF"
 )
@@ -59,6 +59,13 @@ app.add_middleware(
 async def serve_ui(request: Request):
     log.info("Serving UI homepage.")
     resp = templates.TemplateResponse("index.html", {"request": request})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+@app.get("/login", response_class=HTMLResponse)
+async def serve_login(request: Request):
+    log.info("Serving login page.")
+    resp = templates.TemplateResponse("login.html", {"request": request})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -391,7 +398,7 @@ def cache_stats(current_user: TokenData = Depends(get_current_user)):
 
 
 # This is the streaming endpoint
-@router.post("/chat/stream")
+@app.post("/chat/stream")
 @limiter.limit("20/minute")
 async def chat_stream(
     request: Request,

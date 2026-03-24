@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/awslabs/goformation/master/schema/cloudformation.schema.json
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Full ECS + ECR + VPC Infra for Document Portal with secrets and logging
+Description: Full ECS + ECR + VPC Infra for ContractIQ with secrets and logging
 
 Parameters:
   VpcCIDR:
@@ -162,7 +162,7 @@ Resources:
             - ContainerPort: 8080
           Environment:
             - Name: LANGCHAIN_PROJECT
-              Value: DOCUMENT PORTAL
+              Value: CONTRACTIQ
           Secrets:
             - Name: GROQ_API_KEY
               ValueFrom: arn:aws:secretsmanager:us-east-1:685057748560:secret:GROQ_API_KEY

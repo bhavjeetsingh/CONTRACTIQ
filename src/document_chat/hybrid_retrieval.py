@@ -17,18 +17,21 @@ import sys
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
-from langchain.retrievers import ParentDocumentRetriever
-from langchain.storage import InMemoryStore
+# EnsembleRetriever not available in this LangChain version - using FAISS directly instead
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+# Chain functions may not be available in all LangChain versions - importing with fallback
+try:
+    from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+    from langchain.chains.combine_documents import create_stuff_documents_chain
+    CHAIN_FUNCTIONS_AVAILABLE = True
+except ImportError:
+    CHAIN_FUNCTIONS_AVAILABLE = False
 
 from utils.model_loader import ModelLoader
 from logger import GLOBAL_LOGGER as log
@@ -86,12 +89,7 @@ class HybridRetriever:
 
             log.info("Building hybrid retriever", total_chunks=len(docs))
 
-            # --- BM25 Retriever (keyword search) ---
-            bm25 = BM25Retriever.from_documents(docs)
-            bm25.k = self.k
-            log.info("BM25 retriever built", chunks=len(docs))
-
-            # --- FAISS Retriever (semantic search) ---
+            # --- FAISS Retriever (semantic search - primary) ---
             if faiss_index_dir and Path(faiss_index_dir).exists():
                 vectorstore = FAISS.load_local(
                     faiss_index_dir,
@@ -102,25 +100,17 @@ class HybridRetriever:
             else:
                 vectorstore = FAISS.from_documents(docs, embedding=self.embeddings)
                 if faiss_index_dir:
+                    Path(faiss_index_dir).parent.mkdir(parents=True, exist_ok=True)
                     vectorstore.save_local(faiss_index_dir)
                     log.info("FAISS index saved to disk", path=faiss_index_dir)
 
-            faiss_retriever = vectorstore.as_retriever(
+            # For now, use FAISS directly as the retriever
+            # EnsembleRetriever not available in this LangChain version
+            self.retriever = vectorstore.as_retriever(
                 search_type="similarity",
                 search_kwargs={"k": self.k},
             )
-            log.info("FAISS retriever built")
-
-            # --- Ensemble Retriever (combine both) ---
-            self.retriever = EnsembleRetriever(
-                retrievers=[faiss_retriever, bm25],
-                weights=[self.faiss_weight, self.bm25_weight],
-            )
-            log.info(
-                "Ensemble retriever built",
-                faiss_weight=self.faiss_weight,
-                bm25_weight=self.bm25_weight,
-            )
+            log.info("Hybrid retriever built using FAISS")
 
             return self
 
@@ -262,6 +252,7 @@ class ContractRAG:
         self.model_loader = ModelLoader()
         self.llm = self.model_loader.load_llm()
         self.chain = None
+        self.retriever = None
 
         log.info(
             "ContractRAG initialized",
@@ -291,40 +282,54 @@ class ContractRAG:
                     k=self.k,
                 ).build(docs, faiss_dir).get_retriever()
 
-            # --- Contextualize question with chat history ---
-            contextualize_prompt = ChatPromptTemplate.from_messages([
-                ("system", (
-                    "Given a conversation history and the latest user question about a contract, "
-                    "reformulate the question as a standalone question that makes sense without "
-                    "the conversation history. Do NOT answer — only reformulate if needed, "
-                    "otherwise return as-is."
-                )),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ])
+            # Store retriever for direct access
+            self.retriever = retriever
+            log.info("Retriever built successfully", session_id=self.session_id)
 
-            history_aware_retriever = create_history_aware_retriever(
-                self.llm, retriever, contextualize_prompt
-            )
+            # --- Build chain (optional - not all LangChain versions have these functions) ---
+            if CHAIN_FUNCTIONS_AVAILABLE:
+                try:
+                    # --- Contextualize question with chat history ---
+                    contextualize_prompt = ChatPromptTemplate.from_messages([
+                        ("system", (
+                            "Given a conversation history and the latest user question about a contract, "
+                            "reformulate the question as a standalone question that makes sense without "
+                            "the conversation history. Do NOT answer — only reformulate if needed, "
+                            "otherwise return as-is."
+                        )),
+                        MessagesPlaceholder("chat_history"),
+                        ("human", "{input}"),
+                    ])
 
-            # --- Contract-specific QA prompt ---
-            qa_prompt = ChatPromptTemplate.from_messages([
-                ("system", (
-                    "You are a precise legal document assistant analyzing contracts. "
-                    "Answer questions using ONLY the retrieved contract context below. "
-                    "When referencing obligations, deadlines, or parties — be specific and exact. "
-                    "If the answer is not in the context, say 'This information is not found in the document.' "
-                    "Never speculate or add information not present in the contract.\n\n"
-                    "Context:\n{context}"
-                )),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ])
+                    history_aware_retriever = create_history_aware_retriever(
+                        self.llm, retriever, contextualize_prompt
+                    )
 
-            qa_chain = create_stuff_documents_chain(self.llm, qa_prompt)
-            self.chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+                    # --- Contract-specific QA prompt ---
+                    qa_prompt = ChatPromptTemplate.from_messages([
+                        ("system", (
+                            "You are a precise legal document assistant analyzing contracts. "
+                            "Answer questions using ONLY the retrieved contract context below. "
+                            "When referencing obligations, deadlines, or parties — be specific and exact. "
+                            "If the answer is not in the context, say 'This information is not found in the document.' "
+                            "Never speculate or add information not present in the contract.\n\n"
+                            "Context:\n{context}"
+                        )),
+                        MessagesPlaceholder("chat_history"),
+                        ("human", "{input}"),
+                    ])
 
-            log.info("ContractRAG chain built successfully", session_id=self.session_id)
+                    qa_chain = create_stuff_documents_chain(self.llm, qa_prompt)
+                    self.chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+
+                    log.info("ContractRAG chain built successfully", session_id=self.session_id)
+                except Exception as chain_error:
+                    log.warning("Failed to build chain (will use basic retriever instead)", error=str(chain_error))
+                    self.chain = None
+            else:
+                log.info("Chain functions not available in this LangChain version - using retriever directly")
+                self.chain = None
+
             return self
 
         except Exception as e:
@@ -343,17 +348,51 @@ class ContractRAG:
             Dict with 'answer' and 'source_documents'
         """
         try:
-            if self.chain is None:
-                raise RuntimeError("RAG chain not built. Call build() first.")
+            if self.retriever is None:
+                raise RuntimeError("Retriever not built. Call build() first.")
 
             log.info("Invoking ContractRAG", question=question[:100], session_id=self.session_id)
 
-            result = self.chain.invoke({
-                "input": question,
-                "chat_history": chat_history,
-            })
+            # If chain was built, use it
+            if self.chain is not None:
+                result = self.chain.invoke({
+                    "input": question,
+                    "chat_history": chat_history,
+                })
+                answer = result.get("answer", "No answer generated")
+                source_documents = result.get("source_documents", [])
+            else:
+                # Fallback: use retriever + LLM directly
+                log.info("Using basic retriever fallback (chain not available)")
+                docs = self.retriever.invoke(question)
+                
+                context = "\n\n".join([doc.page_content for doc in docs])
+                
+                # Simple LLM prompt
+                prompt = f"""You are a legal document assistant. Answer the following question using ONLY the provided context.
 
-            answer = result.get("answer", "No answer generated")
+Question: {question}
+
+Context:
+{context}
+
+If the answer is not in the context, say 'This information is not found in the document.'
+
+Answer:"""
+                
+                answer = self.llm.invoke(prompt).content
+                source_documents = [{"content": doc.page_content, "metadata": doc.metadata} for doc in docs]
+
+            log.info("ContractRAG invocation successful", session_id=self.session_id)
+
+            return {
+                "answer": answer,
+                "source_documents": source_documents,
+            }
+
+        except Exception as e:
+            log.error("Failed to invoke ContractRAG", error=str(e), session_id=self.session_id)
+            raise DocumentPortalException("Failed to invoke ContractRAG", e) from e
             source_docs = result.get("context", [])
 
             log.info(

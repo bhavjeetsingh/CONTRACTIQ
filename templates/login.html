@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ContractIQ - Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="/static/style.css" rel="stylesheet" />
+</head>
+<body class="auth-page">
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo">📚</div>
+        <h1>ContractIQ</h1>
+        <p class="muted">Smart Contract Intelligence & Analysis</p>
+      </div>
+
+      <!-- Login Form -->
+      <form id="form-login" class="auth-form active">
+        <h2>Sign In</h2>
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input id="login-email" type="email" placeholder="user@example.com" required />
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" placeholder="Your password" required />
+        </div>
+        <button type="submit" class="btn primary full">Sign In</button>
+        <p class="center muted small">Don't have an account? <a href="#" id="link-register" class="auth-link">Create one</a></p>
+        <div id="login-error" class="error-msg"></div>
+      </form>
+
+      <!-- Register Form (hidden by default) -->
+      <form id="form-register" class="auth-form">
+        <h2>Create Account</h2>
+        <div class="field">
+          <label for="register-email">Email</label>
+          <input id="register-email" type="email" placeholder="user@example.com" required />
+        </div>
+        <div class="field">
+          <label for="register-password">Password</label>
+          <input id="register-password" type="password" placeholder="At least 8 characters" required />
+        </div>
+        <div class="field">
+          <label for="register-confirm">Confirm Password</label>
+          <input id="register-confirm" type="password" placeholder="Confirm password" required />
+        </div>
+        <button type="submit" class="btn primary full">Create Account</button>
+        <p class="center muted small">Already have an account? <a href="#" id="link-login" class="auth-link">Sign in</a></p>
+        <div id="register-error" class="error-msg"></div>
+      </form>
+    </div>
+
+    <div class="auth-footer">
+      <p class="tiny">© ContractIQ 2026 • Secure Authentication</p>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "";
+
+    // Check if already logged in
+    function checkAuth() {
+      const token = localStorage.getItem("auth_token");
+      if (token) {
+        // Already logged in, redirect to portal
+        window.location.href = "/";
+        return;
+      }
+    }
+
+    // Form switching
+    document.getElementById("link-register").addEventListener("click", (e) => {
+      e.preventDefault();
+      document.getElementById("form-login").classList.remove("active");
+      document.getElementById("form-register").classList.add("active");
+    });
+
+    document.getElementById("link-login").addEventListener("click", (e) => {
+      e.preventDefault();
+      document.getElementById("form-register").classList.remove("active");
+      document.getElementById("form-login").classList.add("active");
+    });
+
+    // Register handler
+    document.getElementById("form-register").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("register-email").value.trim();
+      const pwd = document.getElementById("register-password").value;
+      const confirm = document.getElementById("register-confirm").value;
+      const errorEl = document.getElementById("register-error");
+
+      if (pwd !== confirm) {
+        errorEl.textContent = "Passwords do not match.";
+        return;
+      }
+
+      try {
+        errorEl.textContent = "";
+        const res = await fetch(`${API_BASE}/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: pwd })
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+
+        errorEl.style.color = "var(--accent-2)";
+        errorEl.textContent = "Account created! Signing you in...";
+        
+        // Auto-login after registration
+        setTimeout(() => {
+          document.getElementById("form-register").classList.remove("active");
+          document.getElementById("form-login").classList.add("active");
+          document.getElementById("login-email").value = email;
+          document.getElementById("login-password").focus();
+        }, 1500);
+      } catch (e) {
+        errorEl.textContent = "Error: " + (e.message || e);
+      }
+    });
+
+    // Login handler
+    document.getElementById("form-login").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("login-email").value.trim();
+      const pwd = document.getElementById("login-password").value;
+      const errorEl = document.getElementById("login-error");
+
+      try {
+        errorEl.textContent = "Signing in...";
+        const res = await fetch(`${API_BASE}/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: pwd })
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        localStorage.setItem("auth_token", data.access_token);
+        localStorage.setItem("user_email", email);
+        
+        errorEl.style.color = "var(--accent-2)";
+        errorEl.textContent = "Success! Redirecting...";
+        
+        // Redirect to portal
+        setTimeout(() => {
+          window.location.href = "/";
+        }, 800);
+      } catch (e) {
+        errorEl.style.color = "#ff6b6b";
+        errorEl.textContent = "Error: " + (e.message || e);
+      }
+    });
+
+    // Check on load
+    window.addEventListener("DOMContentLoaded", checkAuth);
+  </script>
+</body>
+</html>

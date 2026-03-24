@@ -8,7 +8,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Iterable, List, Optional, Dict, Any, Union
 import fitz  # PyMuPDF
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from utils.model_loader import ModelLoader
