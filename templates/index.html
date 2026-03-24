@@ -89,7 +89,13 @@
     <section id="tab-chat" class="tab-panel">
       <div class="card">
         <h2>💬 Chat with your Documents</h2>
-        <p class="muted">Upload PDF/DOCX/TXT; we’ll index to FAISS and enable RAG chat.</p>
+        <p class="muted">RAG flow: index documents first, then ask grounded questions from the built session.</p>
+
+        <div class="rag-steps">
+          <div class="step-pill">1. Upload + Index</div>
+          <div class="step-pill">2. Select Session</div>
+          <div class="step-pill">3. Ask + Inspect Retrieval</div>
+        </div>
 
         <form id="form-chat-index" class="form-grid" onsubmit="return false;">
           <div class="field">
@@ -100,23 +106,15 @@
 
           <div class="grid-3">
             <div class="field">
-              <label for="chat-session">Session ID (optional)</label>
-              <input id="chat-session" type="text" placeholder="Leave blank for auto session" />
-            </div>
-            <div class="field">
-              <label for="chat-chunk">Chunk size</label>
-              <input id="chat-chunk" type="number" value="1000" min="200" step="100" />
-            </div>
-            <div class="field">
-              <label for="chat-overlap">Chunk overlap</label>
-              <input id="chat-overlap" type="number" value="200" min="0" step="50" />
-            </div>
-          </div>
-
-          <div class="grid-3">
-            <div class="field">
               <label for="chat-k">Top-K</label>
               <input id="chat-k" type="number" value="5" min="1" max="20" />
+            </div>
+            <div class="field toggle-row">
+              <label>Use Parent Retriever</label>
+              <label class="switch">
+                <input id="chat-parent" type="checkbox" />
+                <span class="slider"></span>
+              </label>
             </div>
             <div class="field toggle-row">
               <label>Use session-based FAISS</label>
@@ -134,6 +132,14 @@
 
         <div class="divider"></div>
 
+        <div class="session-toolbar">
+          <button id="btn-load-sessions" class="btn small">Load Sessions</button>
+          <select id="chat-session-list" class="session-select">
+            <option value="">No sessions loaded</option>
+          </select>
+          <button id="btn-use-session" class="btn small">Use Selected</button>
+        </div>
+
         <form id="form-chat-ask" class="form-grid" onsubmit="return false;">
           <div class="field">
             <label for="chat-q">Your Question</label>
@@ -149,6 +155,11 @@
         <div id="chat-ans" class="result-block">
           <h3>Answer</h3>
           <div class="answer" id="chat-answer">No answer yet.</div>
+        </div>
+
+        <div id="chat-sources" class="result-block">
+          <h3>Retrieved Context</h3>
+          <div id="chat-sources-body" class="sources muted">No retrieval context yet.</div>
         </div>
       </div>
     </section>
@@ -284,14 +295,74 @@
 
   // ===== CHAT (index + ask) =====
   let currentSession = null;
+  const DEFAULT_CHUNK_SIZE = 1000;
+  const DEFAULT_CHUNK_OVERLAP = 200;
+
+  function renderRagMeta(lines = []) {
+    const meta = document.getElementById("chat-meta");
+    meta.textContent = lines.filter(Boolean).join(" | ");
+  }
+
+  function renderSources(payload) {
+    const wrap = document.getElementById("chat-sources-body");
+    const sources = payload?.source_documents || payload?.sources || [];
+    if (!Array.isArray(sources) || !sources.length) {
+      wrap.textContent = "No retrieval context returned by backend for this response.";
+      return;
+    }
+
+    const max = Math.min(sources.length, 3);
+    const rows = [];
+    for (let i = 0; i < max; i++) {
+      const src = sources[i] || {};
+      const text = (src.content || src.page_content || JSON.stringify(src)).toString();
+      const preview = text.length > 260 ? text.slice(0, 260) + "..." : text;
+      rows.push(`<div class="source-item"><strong>Chunk ${i + 1}</strong><p>${preview}</p></div>`);
+    }
+    wrap.innerHTML = rows.join("");
+  }
+
+  document.getElementById("btn-load-sessions").addEventListener("click", async () => {
+    const meta = document.getElementById("chat-meta");
+    const select = document.getElementById("chat-session-list");
+    try {
+      meta.textContent = "Fetching sessions...";
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${API_BASE}/sessions`, { method: "GET", headers });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      const sessions = json.sessions || [];
+      if (!sessions.length) {
+        select.innerHTML = `<option value="">No sessions found</option>`;
+        meta.textContent = "No saved sessions available.";
+        return;
+      }
+      select.innerHTML = sessions.map(s => `<option value="${s.session_id}">${s.session_id}</option>`).join("");
+      meta.textContent = `Loaded ${sessions.length} sessions.`;
+    } catch (e) {
+      meta.textContent = "Session load failed: " + (e.message || e);
+    }
+  });
+
+  document.getElementById("btn-use-session").addEventListener("click", () => {
+    const selected = document.getElementById("chat-session-list").value;
+    if (!selected) return;
+    currentSession = selected;
+    renderRagMeta([`Session selected: ${selected}`]);
+  });
 
   document.getElementById("btn-build").addEventListener("click", async () => {
     const files     = document.getElementById("chat-files").files;
-    const sessionId = document.getElementById("chat-session").value.trim();
+    const sessionId = currentSession || "";
     const useSess   = document.getElementById("chat-sessionized").checked;
+    const useParent = document.getElementById("chat-parent").checked;
     const k         = +document.getElementById("chat-k").value || 5;
-    const chunk     = +document.getElementById("chat-chunk").value || 1000;
-    const overlap   = +document.getElementById("chat-overlap").value || 200;
+    const chunk     = DEFAULT_CHUNK_SIZE;
+    const overlap   = DEFAULT_CHUNK_OVERLAP;
     const meta      = document.getElementById("chat-meta");
 
     if (!files.length) { meta.textContent = "Please upload at least one file."; return; }
@@ -303,6 +374,7 @@
       [...files].forEach(f => fd.append("files", f)); // <-- must be 'files'
       if (sessionId) fd.append("session_id", sessionId);
       fd.append("use_session_dirs", useSess ? "true" : "false");
+      fd.append("use_parent_retriever", useParent ? "true" : "false");
       fd.append("chunk_size", String(chunk));
       fd.append("chunk_overlap", String(overlap));
       fd.append("k", String(k));
@@ -315,8 +387,13 @@
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
       const json = await res.json(); // { session_id, k, use_session_dirs }
-      currentSession = json.session_id || sessionId || null;
-      meta.textContent = `Indexed. session=${currentSession || "(none)"}, k=${json.k}`;
+      currentSession = json.session_id || currentSession || null;
+      renderRagMeta([
+        `Indexed session: ${currentSession || "(none)"}`,
+        `Retriever: ${json.retriever_type || (useParent ? "parent" : "hybrid")}`,
+        `Top-K: ${json.k ?? k}`,
+        `Files: ${json.files_indexed ?? files.length}`,
+      ]);
     } catch (e) {
       meta.textContent = "Indexing failed: " + (e.message || e);
     }
@@ -351,9 +428,18 @@
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
       const json = await res.json(); // { answer, ... }
-      ans.textContent = json.answer || "No answer.";
+      ans.textContent = typeof json.answer === "string"
+        ? json.answer
+        : JSON.stringify(json.answer ?? "No answer.", null, 2);
+      renderRagMeta([
+        `Session: ${json.session_id || currentSession || "(none)"}`,
+        `Retriever: ${json.retriever_type || "hybrid"}`,
+        `From cache: ${json.from_cache ? "yes" : "no"}`,
+      ]);
+      renderSources(json);
     } catch (e) {
       ans.textContent = "Query failed: " + (e.message || e);
+      renderSources({});
     }
   });
 </script>

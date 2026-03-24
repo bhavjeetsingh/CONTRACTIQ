@@ -87,6 +87,38 @@ h2{margin:0 0 6px 0; font-size:20px}
 
 .divider{height:1px; background:var(--border); margin:18px 0; border-radius:2px}
 
+.rag-steps{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin:12px 0 2px;
+}
+
+.step-pill{
+  border:1px solid var(--border);
+  border-radius:999px;
+  padding:7px 12px;
+  font-size:12px;
+  color:#d4dceb;
+  background:linear-gradient(180deg,#101724,#0c121c);
+}
+
+.session-toolbar{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:10px;
+  align-items:center;
+}
+
+.session-select{
+  width:100%;
+  background:linear-gradient(180deg,#0d1420,#0a1018);
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:10px 12px;
+}
+
 /* ====== FORMS ====== */
 .form-grid{display:grid; grid-template-columns:1fr auto; gap:16px; align-items:end; margin-top:12px}
 .form-grid-2{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:end; margin-top:12px}
@@ -181,6 +213,28 @@ tbody tr:hover td{background:rgba(124,154,255,.05)}
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
 }
 
+.sources{
+  background:linear-gradient(180deg,#0b111a,#0a0f16);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:12px;
+  min-height:60px;
+}
+
+.source-item{
+  border:1px solid #172235;
+  border-radius:12px;
+  background:#0a121d;
+  padding:10px 12px;
+  margin-bottom:10px;
+}
+
+.source-item:last-child{margin-bottom:0}
+
+.source-item strong{display:block; margin-bottom:6px; color:#d4dcf0}
+
+.source-item p{margin:0; color:#9fb0c7; font-size:13px; line-height:1.45}
+
 /* Toggle */
 .toggle-row{display:flex; align-items:center; justify-content:space-between}
 .switch{position:relative; display:inline-block; width:46px; height:26px}
@@ -214,6 +268,7 @@ input:checked + .slider:before{transform:translateX(20px)}
   .form-grid, .form-grid-2{grid-template-columns:1fr}
   .grid-3{grid-template-columns:1fr}
   .form-grid .actions, .form-grid-2 .actions{justify-content:stretch}
+  .session-toolbar{grid-template-columns:1fr}
 }
 
 /* ====== AUTHENTICATION ====== */

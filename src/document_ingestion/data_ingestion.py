@@ -389,8 +389,32 @@ class DocumentComparator:
             dh = DocHandler()
             ref_text = dh.read_document(self.ref_path) if self.ref_path else ""
             act_text = dh.read_document(self.act_path) if self.act_path else ""
-            
-            combined = concat_for_comparison(ref_text, act_text)
+
+            ref_docs = [
+                Document(
+                    page_content=ref_text,
+                    metadata={
+                        "source": self.ref_path or "reference_document",
+                        "file_path": self.ref_path or "",
+                        "file_name": Path(self.ref_path).name if self.ref_path else "reference_document",
+                        "file_type": Path(self.ref_path).suffix.lower() if self.ref_path else "",
+                    },
+                )
+            ] if ref_text else []
+
+            act_docs = [
+                Document(
+                    page_content=act_text,
+                    metadata={
+                        "source": self.act_path or "actual_document",
+                        "file_path": self.act_path or "",
+                        "file_name": Path(self.act_path).name if self.act_path else "actual_document",
+                        "file_type": Path(self.act_path).suffix.lower() if self.act_path else "",
+                    },
+                )
+            ] if act_text else []
+
+            combined = concat_for_comparison(ref_docs, act_docs)
             log.info("Documents combined for comparison", ref_len=len(ref_text), act_len=len(act_text))
             return combined
             
@@ -451,16 +475,7 @@ class ChatIngestor:
             log.exception("Failed to save files for ingestion")
             raise DocumentPortalException(f"Failed to save files: {e}", e) from e
 
-    def load_documents(self, file_paths: List[str]) -> List[Document]:
-        """
-        Load documents from file paths using DocHandler.
-        
-        Args:
-            file_paths: List of file paths to load
-            
-        Returns:
-            List of LangChain Document objects
-        """
+    def prepare_documents(self, file_paths: List[str]) -> List[Document]:
         try:
             all_docs = []
             dh = DocHandler()
@@ -468,9 +483,18 @@ class ChatIngestor:
             for file_path in file_paths:
                 text = dh.read_document(file_path)
                 if text and text.strip():
-                    docs = load_documents(file_path, text)
-                    all_docs.extend(docs)
-                    log.info("Documents loaded", path=file_path, count=len(docs))
+                    doc = Document(
+                        page_content=text,
+                        metadata={
+                            "source": str(file_path),
+                            "file_path": str(file_path),
+                            "file_name": Path(file_path).name,
+                            "file_type": Path(file_path).suffix.lower(),
+                            "file_size": Path(file_path).stat().st_size if Path(file_path).exists() else 0,
+                        },
+                    )
+                    all_docs.append(doc)
+                    log.info("Document loaded", path=file_path)
                     
             log.info("All documents loaded for session", session_id=self.session_id, total=len(all_docs))
             return all_docs
@@ -478,3 +502,7 @@ class ChatIngestor:
         except Exception as e:
             log.exception("Failed to load documents")
             raise DocumentPortalException(f"Failed to load documents: {e}", e) from e
+
+    def load_documents(self, file_paths: List[str]) -> List[Document]:
+        """Backward-compatible wrapper for older call sites."""
+        return self.prepare_documents(file_paths)

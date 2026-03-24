@@ -216,7 +216,7 @@ async def chat_build_index(
         )
  
         paths = ci.save_files(wrapped)
-        docs = ci.load_documents(paths)
+        docs = ci.prepare_documents(paths)
  
         faiss_dir = os.path.join(FAISS_BASE, ci.session_id) if use_session_dirs else FAISS_BASE
  

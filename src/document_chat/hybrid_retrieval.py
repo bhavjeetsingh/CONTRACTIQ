@@ -16,6 +16,7 @@ import os
 import sys
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+from dataclasses import dataclass
 
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
@@ -104,13 +105,23 @@ class HybridRetriever:
                     vectorstore.save_local(faiss_index_dir)
                     log.info("FAISS index saved to disk", path=faiss_index_dir)
 
-            # For now, use FAISS directly as the retriever
-            # EnsembleRetriever not available in this LangChain version
-            self.retriever = vectorstore.as_retriever(
+            faiss_retriever = vectorstore.as_retriever(
                 search_type="similarity",
                 search_kwargs={"k": self.k},
             )
-            log.info("Hybrid retriever built using FAISS")
+
+            # BM25 keyword retriever for exact term matching
+            bm25_retriever = BM25Retriever.from_documents(docs)
+            bm25_retriever.k = self.k
+
+            self.retriever = WeightedHybridRetriever(
+                faiss_retriever=faiss_retriever,
+                bm25_retriever=bm25_retriever,
+                faiss_weight=self.faiss_weight,
+                bm25_weight=self.bm25_weight,
+                k=self.k,
+            )
+            log.info("Hybrid retriever built using BM25 + FAISS")
 
             return self
 
@@ -219,6 +230,67 @@ class ParentChunkRetriever:
         if self.retriever is None:
             raise RuntimeError("Retriever not built yet. Call build() first.")
         return self.retriever
+
+
+@dataclass
+class WeightedHybridRetriever:
+    """
+    Lightweight weighted fusion retriever.
+    Combines ranked outputs from FAISS and BM25 using reciprocal-rank-style scoring.
+    """
+
+    faiss_retriever: Any
+    bm25_retriever: Any
+    faiss_weight: float
+    bm25_weight: float
+    k: int
+
+    @staticmethod
+    def _doc_key(doc: Document) -> str:
+        source = str(doc.metadata.get("source", "")) if isinstance(doc.metadata, dict) else ""
+        page = str(doc.metadata.get("page", "")) if isinstance(doc.metadata, dict) else ""
+        content = (doc.page_content or "")[:300]
+        return f"{source}|{page}|{content}"
+
+    def invoke(self, query: str) -> List[Document]:
+        faiss_docs: List[Document] = []
+        bm25_docs: List[Document] = []
+
+        try:
+            faiss_docs = self.faiss_retriever.invoke(query) or []
+        except Exception as e:
+            log.warning("FAISS retrieval failed in hybrid retriever", error=str(e))
+
+        try:
+            bm25_docs = self.bm25_retriever.invoke(query) or []
+        except Exception as e:
+            log.warning("BM25 retrieval failed in hybrid retriever", error=str(e))
+
+        scores: Dict[str, float] = {}
+        doc_by_key: Dict[str, Document] = {}
+
+        for rank, doc in enumerate(faiss_docs):
+            key = self._doc_key(doc)
+            doc_by_key[key] = doc
+            scores[key] = scores.get(key, 0.0) + self.faiss_weight * (1.0 / (rank + 1))
+
+        for rank, doc in enumerate(bm25_docs):
+            key = self._doc_key(doc)
+            if key not in doc_by_key:
+                doc_by_key[key] = doc
+            scores[key] = scores.get(key, 0.0) + self.bm25_weight * (1.0 / (rank + 1))
+
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        fused_docs = [doc_by_key[key] for key, _ in ranked[: self.k]]
+
+        log.info(
+            "Hybrid retrieval completed",
+            query=query[:80],
+            faiss_hits=len(faiss_docs),
+            bm25_hits=len(bm25_docs),
+            fused_hits=len(fused_docs),
+        )
+        return fused_docs
 
 
 class ContractRAG:
