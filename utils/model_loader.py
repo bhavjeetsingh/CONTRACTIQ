@@ -3,6 +3,7 @@ import sys
 import json
 from dotenv import load_dotenv
 from utils.config_loader import load_config
+from utils.langsmith_tracer import setup_langsmith
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from logger import GLOBAL_LOGGER as log
@@ -62,6 +63,8 @@ class ModelLoader:
         else:
             log.info("Running in PRODUCTION mode")
 
+        setup_langsmith()
+
         self.api_key_mgr = ApiKeyManager()
         self.config = load_config()
         log.info("YAML config loaded", config_keys=list(self.config.keys()))
@@ -95,12 +98,12 @@ class ModelLoader:
                      huggingface_error=str(hf_error), google_error=str(google_error))
             raise DocumentPortalException("Failed to load any embedding model", sys)
 
-    def load_llm(self):
+    def load_llm(self, provider_key: str | None = None):
         """
         Load and return the configured LLM model.
         """
         llm_block = self.config["llm"]
-        provider_key = os.getenv("LLM_PROVIDER", "google")
+        provider_key = provider_key or os.getenv("LLM_PROVIDER", "google")
 
         if provider_key not in llm_block:
             log.error("LLM provider not found in config", provider=provider_key)

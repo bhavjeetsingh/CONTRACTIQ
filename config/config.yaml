@@ -18,6 +18,6 @@ llm:
 
   google:
     provider: "google"
-    model_name: "gemini-2.0-flash"
+    model_name: "gemini-2.5-flash"
     temperature: 0
     max_output_tokens: 2048

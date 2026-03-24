@@ -52,7 +52,31 @@ class DocumentAnalyzer:
             return response
 
         except Exception as e:
-            log.error("Metadata analysis failed", error=str(e))
+            err = str(e)
+            if "ResourceExhausted" in err or "quota" in err.lower() or "429" in err:
+                log.warning("Primary LLM quota exceeded; retrying with Groq fallback")
+                try:
+                    fallback_llm = self.loader.load_llm("groq")
+                    fallback_fixing_parser = OutputFixingParser.from_llm(
+                        parser=self.parser,
+                        llm=fallback_llm,
+                    )
+                    fallback_chain = self.prompt | fallback_llm | fallback_fixing_parser
+                    response = fallback_chain.invoke({
+                        "format_instructions": self.parser.get_format_instructions(),
+                        "document_text": document_text,
+                    })
+                    log.info("Metadata extraction successful using Groq fallback", keys=list(response.keys()))
+                    return response
+                except Exception as fallback_error:
+                    log.error(
+                        "Metadata analysis failed after Groq fallback",
+                        primary_error=err,
+                        fallback_error=str(fallback_error),
+                    )
+                    raise DocumentPortalException("Metadata extraction failed", sys)
+
+            log.error("Metadata analysis failed", error=err)
             raise DocumentPortalException("Metadata extraction failed",sys)
         
     
