@@ -257,4 +257,4 @@ aws cloudformation deploy \
 
 **Bhavjeet Singh**
 IIT Madras — BS Data Science and Programming
-[LinkedIn](https://linkedin.com/in/bhavjeetsingh) · [GitHub](https://github.com/bhavjeetsingh) · bhavjeetsingh784@gmail.com
+[LinkedIn](https://linkedin.com/in/bhavjeet-singh) · [GitHub](https://github.com/bhavjeetsingh) · bhavjeetsingh784@gmail.com
