@@ -23,7 +23,7 @@
     </nav>
   </header>
 
-  <main class="container">
+  <main id="main-content" class="container" style="display:none;">
     <!-- ============== ANALYSIS ============== -->
     <section id="tab-analysis" class="tab-panel active">
       <div class="card">
@@ -155,9 +155,203 @@
     <div class="tiny">Frontend only – hook to your FastAPI later.</div>
   </footer>
 
+  <!-- Auth Modal -->
+  <div id="auth-modal" class="modal active">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Document Portal</h2>
+        <p class="muted">Secure Document Processing & Analysis</p>
+      </div>
+      
+      <!-- Login Form -->
+      <form id="form-login" class="auth-form">
+        <h3>Sign In</h3>
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input id="login-email" type="email" placeholder="user@example.com" required />
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" placeholder="Your password" required />
+        </div>
+        <button type="submit" class="btn primary full">Sign In</button>
+        <p class="center muted small">Don't have an account? <a href="#" id="link-register">Create one</a></p>
+        <div id="login-error" class="error-msg"></div>
+      </form>
+
+      <!-- Register Form (hidden by default) -->
+      <form id="form-register" class="auth-form hidden">
+        <h3>Create Account</h3>
+        <div class="field">
+          <label for="register-email">Email</label>
+          <input id="register-email" type="email" placeholder="user@example.com" required />
+        </div>
+        <div class="field">
+          <label for="register-password">Password</label>
+          <input id="register-password" type="password" placeholder="At least 8 characters" required />
+        </div>
+        <div class="field">
+          <label for="register-confirm">Confirm Password</label>
+          <input id="register-confirm" type="password" placeholder="Confirm password" required />
+        </div>
+        <button type="submit" class="btn primary full">Create Account</button>
+        <p class="center muted small">Already have an account? <a href="#" id="link-login">Sign in</a></p>
+        <div id="register-error" class="error-msg"></div>
+      </form>
+    </div>
+  </div>
+
+  <header class="app-header">
+    <div class="brand">
+      <span class="logo">📚</span>
+      <h1>Document Portal</h1>
+    </div>
+    <nav class="mode-switch">
+      <button class="tab-btn active" data-tab="analysis">Document Analysis</button>
+      <button class="tab-btn" data-tab="compare">Document Compare</button>
+      <button class="tab-btn" data-tab="chat">Doc Chat</button>
+    </nav>
+    <div class="auth-header">
+      <span class="user-email" id="user-email"></span>
+      <button id="btn-logout" class="btn small">Logout</button>
+    </div>
+  </header>
+
   <script>
-  // Base URL for API (same origin when opened via FastAPI)
+  // ===== AUTHENTICATION SETUP =====
   const API_BASE = "";
+  let authToken = localStorage.getItem("auth_token");
+  let userEmail = localStorage.getItem("user_email");
+
+  function getAuthHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    if (authToken) {
+      headers["Authorization"] = `Bearer ${authToken}`;
+    }
+    return headers;
+  }
+
+  async function updateAuthHeaders(formData) {
+    const headers = {};
+    if (authToken) {
+      headers["Authorization"] = `Bearer ${authToken}`;
+    }
+    return headers;
+  }
+
+  function showAuthModal() {
+    document.getElementById("auth-modal").classList.add("active");
+    document.getElementById("main-content").style.display = "none";
+  }
+
+  function hideAuthModal() {
+    document.getElementById("auth-modal").classList.remove("active");
+    document.getElementById("main-content").style.display = "block";
+  }
+
+  function updateUserUI() {
+    const userEmailEl = document.getElementById("user-email");
+    if (userEmail) {
+      userEmailEl.textContent = userEmail;
+      hideAuthModal();
+    } else {
+      userEmailEl.textContent = "Not logged in";
+      showAuthModal();
+    }
+  }
+
+  // Auth form switching
+  document.getElementById("link-register").addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("form-login").classList.add("hidden");
+    document.getElementById("form-register").classList.remove("hidden");
+  });
+
+  document.getElementById("link-login").addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("form-register").classList.add("hidden");
+    document.getElementById("form-login").classList.remove("hidden");
+  });
+
+  // Register
+  document.getElementById("form-register").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("register-email").value.trim();
+    const pwd = document.getElementById("register-password").value;
+    const confirm = document.getElementById("register-confirm").value;
+    const errorEl = document.getElementById("register-error");
+
+    if (pwd !== confirm) {
+      errorEl.textContent = "Passwords do not match.";
+      return;
+    }
+
+    try {
+      errorEl.textContent = "";
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pwd })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+
+      errorEl.style.color = "var(--accent-2)";
+      errorEl.textContent = "Account created! Now sign in.";
+      setTimeout(() => {
+        document.getElementById("form-register").classList.add("hidden");
+        document.getElementById("form-login").classList.remove("hidden");
+      }, 1500);
+    } catch (e) {
+      errorEl.textContent = "Error: " + (e.message || e);
+    }
+  });
+
+  // Login
+  document.getElementById("form-login").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("login-email").value.trim();
+    const pwd = document.getElementById("login-password").value;
+    const errorEl = document.getElementById("login-error");
+
+    try {
+      errorEl.textContent = "";
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pwd })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      authToken = data.access_token;
+      userEmail = email;
+      localStorage.setItem("auth_token", authToken);
+      localStorage.setItem("user_email", userEmail);
+      updateUserUI();
+    } catch (e) {
+      errorEl.textContent = "Error: " + (e.message || e);
+    }
+  });
+
+  // Logout
+  document.getElementById("btn-logout").addEventListener("click", () => {
+    authToken = null;
+    userEmail = null;
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("user_email");
+    updateUserUI();
+  });
+
+  // Check auth on load
+  window.addEventListener("DOMContentLoaded", updateUserUI);
 
   // Tab switching (unchanged)
   const tabs = document.querySelectorAll(".tab-btn");
@@ -182,7 +376,9 @@
       const fd = new FormData();
       fd.append("file", file); // <-- must be 'file' to match FastAPI
 
-      const res = await fetch(`${API_BASE}/analyze`, { method: "POST", body: fd });
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${API_BASE}/analyze`, { method: "POST", body: fd, headers });
       if (!res.ok) {
         const err = await res.json().catch(()=>({detail:res.statusText}));
         throw new Error(err.detail || `HTTP ${res.status}`);
@@ -212,7 +408,9 @@
       fd.append("reference", ref); // <-- must be 'reference'
       fd.append("actual", act);    // <-- must be 'actual'
 
-      const res = await fetch(`${API_BASE}/compare`, { method: "POST", body: fd });
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${API_BASE}/compare`, { method: "POST", body: fd, headers });
       if (!res.ok) {
         const err = await res.json().catch(()=>({detail:res.statusText}));
         throw new Error(err.detail || `HTTP ${res.status}`);
@@ -258,7 +456,9 @@
       fd.append("chunk_overlap", String(overlap));
       fd.append("k", String(k));
 
-      const res = await fetch(`${API_BASE}/chat/index`, { method: "POST", body: fd });
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${API_BASE}/chat/index`, { method: "POST", body: fd, headers });
       if (!res.ok) {
         const err = await res.json().catch(()=>({detail:res.statusText}));
         throw new Error(err.detail || `HTTP ${res.status}`);
@@ -292,7 +492,9 @@
       fd.append("k", String(k));
       if (useSess && currentSession) fd.append("session_id", currentSession);
 
-      const res = await fetch(`${API_BASE}/chat/query`, { method: "POST", body: fd });
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${API_BASE}/chat/query`, { method: "POST", body: fd, headers });
       if (!res.ok) {
         const err = await res.json().catch(()=>({detail:res.statusText}));
         throw new Error(err.detail || `HTTP ${res.status}`);

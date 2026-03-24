@@ -215,3 +215,92 @@ input:checked + .slider:before{transform:translateX(20px)}
   .grid-3{grid-template-columns:1fr}
   .form-grid .actions, .form-grid-2 .actions{justify-content:stretch}
 }
+
+/* ====== AUTHENTICATION ====== */
+.modal{
+  position:fixed; inset:0; z-index:100;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,.85);
+  backdrop-filter:blur(4px);
+  opacity:0; pointer-events:none;
+  transition:opacity .3s ease;
+}
+.modal.active{
+  opacity:1; pointer-events:auto;
+}
+
+.modal-content{
+  background:linear-gradient(135deg, #0f1622 0%, #0b111a 100%);
+  border:1px solid rgba(124,154,255,.2);
+  border-radius:var(--radius);
+  padding:32px;
+  max-width:380px; width:90%;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+
+.modal-header{text-align:center; margin-bottom:24px}
+.modal-header h2{margin:0 0 8px 0; font-size:24px; font-weight:700}
+.modal-header p{margin:0; color:var(--muted)}
+
+.auth-form{display:none}
+.auth-form:not(.hidden){display:block}
+.auth-form.hidden{display:none}
+
+.auth-form h3{margin:0 0 16px 0; font-size:16px; color:var(--text)}
+.auth-form .field{margin-bottom:14px}
+.auth-form input[type="email"],
+.auth-form input[type="password"]{
+  width:100%;
+  background:linear-gradient(180deg,#0a0f18,#070b11);
+  color:var(--text);
+  border:1px solid #1d2836;
+  border-radius:10px;
+  padding:12px 14px;
+  outline:none;
+  transition:border-color .2s ease, box-shadow .2s ease;
+}
+.auth-form input[type="email"]:focus,
+.auth-form input[type="password"]:focus{
+  border-color:#3d5680;
+  box-shadow:0 0 0 3px rgba(124,154,255,.15);
+}
+
+.auth-form .btn.full{
+  width:100%;
+  justify-content:center;
+  margin-top:16px;
+}
+
+.auth-form .center{margin-top:14px; font-size:13px}
+.auth-form .center a{
+  color:var(--accent);
+  text-decoration:none;
+  transition:color .2s ease;
+}
+.auth-form .center a:hover{color:var(--accent-2)}
+
+.error-msg{
+  color:#ff6b6b;
+  font-size:12px;
+  margin-top:8px;
+  min-height:14px;
+  display:flex;
+  align-items:center;
+}
+
+.auth-header{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  color:var(--muted);
+  font-size:13px;
+}
+
+.user-email{color:var(--text); font-weight:500}
+
+.btn.small{
+  padding:8px 12px;
+  font-size:12px;
+}
+
+.hidden{display:none !important}
