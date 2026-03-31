@@ -402,8 +402,16 @@ class ContractRAG:
                         ("human", "{input}"),
                     ])
 
+                    from langchain_core.runnables import RunnableLambda
+                    
+                    # Wrap the custom retriever if it's not a BaseRetriever
+                    if not hasattr(self.retriever, "invoke"):
+                        runnable_retriever = self.retriever
+                    else:
+                        runnable_retriever = RunnableLambda(self.retriever.invoke)
+
                     history_aware_retriever = create_history_aware_retriever(
-                        self.llm, self.retriever, contextualize_prompt
+                        self.llm, runnable_retriever, contextualize_prompt
                     )
 
                     qa_prompt = ChatPromptTemplate.from_messages([

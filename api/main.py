@@ -217,6 +217,17 @@ async def chat_build_index(
  
         paths = ci.save_files(wrapped)
         docs = ci.prepare_documents(paths)
+        
+        # If not using ParentDocumentRetriever, we must chunk the docs here
+        if not use_parent_retriever:
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=["\n\n", "\n", ".", " "]
+            )
+            docs = splitter.split_documents(docs)
+            log.info(f"Chunked documents into {len(docs)} chunks")
  
         faiss_dir = os.path.join(FAISS_BASE, ci.session_id) if use_session_dirs else FAISS_BASE
  

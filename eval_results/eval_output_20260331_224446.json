@@ -1,0 +1,17 @@
+{
+  "generated_results": [
+    {
+      "question": "Who are the parties involved in this agreement?",
+      "answer": "The parties involved in this agreement are:\n\n1.  **The Consultant**: \"<<Name of the Consultant>> son of <<Father\u2019s name>>, UID/PAN: <<Insert aadhar number or PAN>>, an individual, residing at <<Complete Address>>\".\n2.  **The Company**: The document refers to \"The Company\" as a party, but its specific name or details are not provided in the context.",
+      "ground_truth": "The names and roles of all parties in the contract."
+    },
+    {
+      "question": "What are the payment terms?",
+      "answer": "This information is not found in the document.",
+      "ground_truth": "The payment schedule, amounts, and conditions specified."
+    }
+  ],
+  "ragas_scores": {
+    "error": "Evaluation crashed: 0"
+  }
+}
