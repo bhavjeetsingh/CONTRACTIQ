@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
+from langchain.storage import InMemoryStore
+from langchain.retrievers import ParentDocumentRetriever
 # EnsembleRetriever not available in this LangChain version - using FAISS directly instead
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.runnables import RunnablePassthrough
@@ -322,7 +324,8 @@ class ContractRAG:
         self.bm25_weight = bm25_weight
 
         self.model_loader = ModelLoader()
-        self.llm = self.model_loader.load_llm()
+        # Lazy-load LLM during first query to keep index build fast.
+        self.llm = None
         self.chain = None
         self.retriever = None
 
@@ -358,49 +361,9 @@ class ContractRAG:
             self.retriever = retriever
             log.info("Retriever built successfully", session_id=self.session_id)
 
-            # --- Build chain (optional - not all LangChain versions have these functions) ---
-            if CHAIN_FUNCTIONS_AVAILABLE:
-                try:
-                    # --- Contextualize question with chat history ---
-                    contextualize_prompt = ChatPromptTemplate.from_messages([
-                        ("system", (
-                            "Given a conversation history and the latest user question about a contract, "
-                            "reformulate the question as a standalone question that makes sense without "
-                            "the conversation history. Do NOT answer — only reformulate if needed, "
-                            "otherwise return as-is."
-                        )),
-                        MessagesPlaceholder("chat_history"),
-                        ("human", "{input}"),
-                    ])
-
-                    history_aware_retriever = create_history_aware_retriever(
-                        self.llm, retriever, contextualize_prompt
-                    )
-
-                    # --- Contract-specific QA prompt ---
-                    qa_prompt = ChatPromptTemplate.from_messages([
-                        ("system", (
-                            "You are a precise legal document assistant analyzing contracts. "
-                            "Answer questions using ONLY the retrieved contract context below. "
-                            "When referencing obligations, deadlines, or parties — be specific and exact. "
-                            "If the answer is not in the context, say 'This information is not found in the document.' "
-                            "Never speculate or add information not present in the contract.\n\n"
-                            "Context:\n{context}"
-                        )),
-                        MessagesPlaceholder("chat_history"),
-                        ("human", "{input}"),
-                    ])
-
-                    qa_chain = create_stuff_documents_chain(self.llm, qa_prompt)
-                    self.chain = create_retrieval_chain(history_aware_retriever, qa_chain)
-
-                    log.info("ContractRAG chain built successfully", session_id=self.session_id)
-                except Exception as chain_error:
-                    log.warning("Failed to build chain (will use basic retriever instead)", error=str(chain_error))
-                    self.chain = None
-            else:
-                log.info("Chain functions not available in this LangChain version - using retriever directly")
-                self.chain = None
+            # Build only retriever during indexing; chain and LLM are initialized lazily on first query.
+            self.chain = None
+            log.info("Skipped chain build during indexing for faster index creation", session_id=self.session_id)
 
             return self
 
@@ -422,6 +385,46 @@ class ContractRAG:
         try:
             if self.retriever is None:
                 raise RuntimeError("Retriever not built. Call build() first.")
+
+            if self.llm is None:
+                self.llm = self.model_loader.load_llm()
+
+            if self.chain is None and CHAIN_FUNCTIONS_AVAILABLE:
+                try:
+                    contextualize_prompt = ChatPromptTemplate.from_messages([
+                        ("system", (
+                            "Given a conversation history and the latest user question about a contract, "
+                            "reformulate the question as a standalone question that makes sense without "
+                            "the conversation history. Do NOT answer — only reformulate if needed, "
+                            "otherwise return as-is."
+                        )),
+                        MessagesPlaceholder("chat_history"),
+                        ("human", "{input}"),
+                    ])
+
+                    history_aware_retriever = create_history_aware_retriever(
+                        self.llm, self.retriever, contextualize_prompt
+                    )
+
+                    qa_prompt = ChatPromptTemplate.from_messages([
+                        ("system", (
+                            "You are a precise legal document assistant analyzing contracts. "
+                            "Answer questions using ONLY the retrieved contract context below. "
+                            "When referencing obligations, deadlines, or parties — be specific and exact. "
+                            "If the answer is not in the context, say 'This information is not found in the document.' "
+                            "Never speculate or add information not present in the contract.\n\n"
+                            "Context:\n{context}"
+                        )),
+                        MessagesPlaceholder("chat_history"),
+                        ("human", "{input}"),
+                    ])
+
+                    qa_chain = create_stuff_documents_chain(self.llm, qa_prompt)
+                    self.chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+                    log.info("ContractRAG chain built lazily", session_id=self.session_id)
+                except Exception as chain_error:
+                    log.warning("Lazy chain build failed (using retriever fallback)", error=str(chain_error))
+                    self.chain = None
 
             log.info("Invoking ContractRAG", question=question[:100], session_id=self.session_id)
 

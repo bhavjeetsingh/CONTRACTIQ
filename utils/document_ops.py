@@ -107,19 +107,53 @@ def read_pdf_via_handler(doc_handler, pdf_path: str) -> str:
     """
     return doc_handler.read_document(pdf_path)
 
-def concat_for_analysis(documents: List[Document]) -> str:
+def _coerce_documents(documents: Union[List[Document], List[str], str, None]) -> List[Document]:
+    """Normalize legacy or mixed inputs into LangChain Document objects."""
+    if documents is None:
+        return []
+
+    if isinstance(documents, str):
+        return [
+            Document(
+                page_content=documents,
+                metadata={"source": "raw_text"},
+            )
+        ] if documents.strip() else []
+
+    normalized: List[Document] = []
+    for item in documents:
+        if isinstance(item, Document):
+            normalized.append(item)
+            continue
+
+        if isinstance(item, str):
+            if item.strip():
+                normalized.append(Document(page_content=item, metadata={"source": "raw_text"}))
+            continue
+
+        # Best-effort support for document-like objects from older code paths
+        page_content = getattr(item, "page_content", None)
+        metadata = getattr(item, "metadata", None)
+        if isinstance(page_content, str):
+            normalized.append(Document(page_content=page_content, metadata=metadata or {"source": "unknown"}))
+
+    return normalized
+
+
+def concat_for_analysis(documents: Union[List[Document], List[str], str, None]) -> str:
     """
     Concatenate documents for analysis
     Maintains document boundaries and metadata
     Compatible with both old and new document structures
     """
     try:
-        if not documents:
+        normalized_docs = _coerce_documents(documents)
+        if not normalized_docs:
             return ""
             
         content_parts = []
         
-        for i, doc in enumerate(documents):
+        for i, doc in enumerate(normalized_docs):
             # Handle both old and new metadata formats
             file_name = (doc.metadata.get('file_name') or 
                         doc.metadata.get('source', '').split('/')[-1] or 
@@ -133,7 +167,7 @@ def concat_for_analysis(documents: List[Document]) -> str:
         
         combined = "\n".join(content_parts)
         log.info("Documents concatenated for analysis", 
-                count=len(documents), 
+            count=len(normalized_docs), 
                 total_length=len(combined))
         return combined
         
@@ -141,7 +175,10 @@ def concat_for_analysis(documents: List[Document]) -> str:
         log.error("Error concatenating documents for analysis", error=str(e))
         raise DocumentPortalException("Failed to concatenate documents for analysis", e) from e
 
-def concat_for_comparison(ref_docs: List[Document], act_docs: List[Document]) -> str:
+def concat_for_comparison(
+    ref_docs: Union[List[Document], List[str], str, None],
+    act_docs: Union[List[Document], List[str], str, None],
+) -> str:
     """
     Concatenate documents for comparison - maintains backward compatibility
     """

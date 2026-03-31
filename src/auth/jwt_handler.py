@@ -11,7 +11,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-this-in-production-use-secrets-mana
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Use pbkdf2_sha256 for stable cross-platform hashing without bcrypt backend issues.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 # --- Schemas ---
