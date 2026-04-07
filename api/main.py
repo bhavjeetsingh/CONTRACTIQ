@@ -17,7 +17,7 @@ from src.document_ingestion.data_ingestion import (
     DocumentComparator,
     ChatIngestor,
 )
-from src.eval.ragas_evaluator import RAGASEvaluator, ContractEvalSuite
+from src.eval.ragas_evaluator import ContractEvalSuite
 from constants import SUPPORTED_EXTENSIONS
 from src.document_analyzer.data_analysis import DocumentAnalyzer
 from src.document_compare.document_comparator import DocumentComparatorLLM
@@ -511,12 +511,19 @@ async def evaluate_rag(
 def get_latest_eval() -> Any:
     """Get the most recent evaluation scores — shown in README."""
     try:
-        from src.eval.ragas_evaluator import RAGASEvaluator
-        evaluator = RAGASEvaluator()
-        results = evaluator.load_latest_results()
-        if results is None:
-            return {"message": "No evaluation results yet. Run /eval/score first."}
-        return results
+        from src.eval.ragas_evaluator import ContractEvalSuite
+        import json
+        from pathlib import Path
+        
+        results_dir = Path("eval_results")
+        if results_dir.exists():
+            files = list(results_dir.glob("eval_output_*.json"))
+            if files:
+                latest_file = max(files, key=lambda f: Path(f).stat().st_mtime)
+                with open(latest_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+                    
+        return {"message": "No evaluation results yet. Run python run_eval.py first."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     

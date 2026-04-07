@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
-from langchain.storage import InMemoryStore
+from langchain_core.stores import InMemoryStore
 from langchain.retrievers import ParentDocumentRetriever
 # EnsembleRetriever not available in this LangChain version - using FAISS directly instead
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -387,7 +387,14 @@ class ContractRAG:
                 raise RuntimeError("Retriever not built. Call build() first.")
 
             if self.llm is None:
-                self.llm = self.model_loader.load_llm()
+                try:
+                    # model_loader usually has the config
+                    provider = getattr(self.model_loader, "config", {}).get("llm", {}).get("provider", "groq")
+                    if not provider:
+                        provider = "groq"
+                    self.llm = self.model_loader.load_llm(provider)
+                except Exception as e:
+                    self.llm = self.model_loader.load_llm("groq")
 
             if self.chain is None and CHAIN_FUNCTIONS_AVAILABLE:
                 try:

@@ -1,10 +1,7 @@
-"""
-Run this script locally to test your RAG pipeline and generate QA pairs.
-"""
-
 import os
 import sys
 import argparse
+import random
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -18,47 +15,81 @@ from src.document_ingestion.data_ingestion import DocHandler
 from src.document_chat.hybrid_retrieval import ContractRAG
 from src.eval.ragas_evaluator import ContractEvalSuite
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage
 
-def run_eval(pdf_path: str):
-    """
-    Run the standard test questions against a contract PDF.
-    """
-
-    print("Step 1: Loading document...")
-    handler = DocHandler(session_id="eval_session")
+def run_eval(pdf_dir: str, dataset_path: str = None):
+    print("Step 1: Loading 1 PDF document...")
+    handler = DocHandler(session_id="eval_session_1_doc")
     
     class LocalFile:
         def __init__(self, path):
+            self.path = path
             self.name = Path(path).name
         def read(self):
-            return open(pdf_path, "rb").read()
+            return open(self.path, "rb").read()
         def getbuffer(self):
             return self.read()
 
-    saved_path = handler.save_document(LocalFile(pdf_path))
-    text = handler.read_document(saved_path)
-    print(f"   Loaded {len(text)} characters")
+    pdf_paths = list(set(Path(pdf_dir).glob("*.pdf")) | set(Path(pdf_dir).glob("*.PDF")))
+    if not pdf_paths:
+        print("No PDFs found.")
+        return
+        
+    selected_pdf = random.choice(pdf_paths)
+    print(f"   Selected PDF: {selected_pdf.name}")
+    
+    try:
+        saved_path = handler.save_document(LocalFile(str(selected_pdf)))
+        text = handler.read_document(saved_path)
+        docs = [Document(page_content=text, metadata={"source": str(selected_pdf)})]
+    except Exception as e:
+        print(f"   Failed to load {selected_pdf.name}: {e}")
+        return
 
-    print("\nStep 2: Building Hybrid RAG pipeline...")
-    docs = [Document(page_content=text, metadata={"source": pdf_path})]
+    print("\n   Generating Question from this single PDF...")
+    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.2)
+    prompt = f"Given the following document text, generate one specific question that can be answered from it, and provide the correct factual answer (ground truth). Format your output exactly like this:\nQuestion: <question>\nAnswer: <answer>\n\nText:\n{text[:6000]}"
+    try:
+        response = llm.invoke([HumanMessage(content=prompt)]).content
+        q = ""
+        a = ""
+        for line in response.split("\n"):
+            if line.startswith("Question:"):
+                q = line.replace("Question:", "").strip()
+            elif line.startswith("Answer:"):
+                a = line.replace("Answer:", "").strip()
+        if not q or not a:
+            raise ValueError("Failed to parse QA format.")
+        test_cases = [{"question": q, "ground_truth": a}]
+        print(f"   Generated Q: {q}")
+        print(f"   Generated A: {a}")
+    except Exception as e:
+        print(f"   Failed to generate question: {e}")
+        return
 
+    print("\nStep 2: Building Hybrid RAG pipeline for this 1 PDF...")
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     docs = splitter.split_documents(docs)
-
-    faiss_dir = "faiss_index/eval_session"
+    
+    faiss_dir = "faiss_index/eval_session_1_doc"
     rag = ContractRAG(
-        session_id="eval_session",
+        session_id="eval_session_1_doc",
         use_parent_retriever=False,
-        k=5,
+        k=3,
     )
     rag.build(docs, faiss_dir=faiss_dir)
     print("   Hybrid RAG built (BM25 + FAISS)")
 
-    print("\nStep 3: Generating Answers for Standard Test Cases...\n")
+    print("\nStep 3: Generating Answer & Scoring with Ragas...\n")
     print("="*60)
     
     try:
-        results, scores = ContractEvalSuite.run_eval_with_rag(rag, save_results=True)
+        results, scores = ContractEvalSuite.run_eval_with_rag(
+            rag, 
+            test_cases=test_cases, 
+            save_results=True
+        )
         
         for i, res in enumerate(results, 1):
             print(f"Q{i}: {res['question']}")
@@ -76,19 +107,10 @@ def run_eval(pdf_path: str):
 
     print("\nEvaluation Q&A generation complete!")
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Test RAG pipeline on a contract PDF")
-    parser.add_argument(
-        "--pdf",
-        type=str,
-        required=True,
-        help="Path to contract PDF file",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pdf-dir", dest="pdf_dir", type=str, required=True)
+    parser.add_argument("--dataset", type=str, default=None)
     args = parser.parse_args()
 
-    if not Path(args.pdf).exists():
-        print(f"Error: File not found: {args.pdf}")
-        sys.exit(1)
-
-    run_eval(args.pdf)
+    run_eval(args.pdf_dir, dataset_path=args.dataset)

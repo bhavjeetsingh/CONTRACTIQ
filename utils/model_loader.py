@@ -77,10 +77,10 @@ class ModelLoader:
         # Try HuggingFace first (most reliable for local use)
         try:
             from langchain_community.embeddings import HuggingFaceEmbeddings
-            log.info("Loading HuggingFace embedding model (primary)")
-            # Use a lightweight model for faster inference
+            log.info("Loading HuggingFace BGE embedding model (primary)")
+            # Using BAAI/bge-small-en-v1.5 as it outperforms OpenAI ada-002 on MTEB benchmarks
             return HuggingFaceEmbeddings(
-                model_name="all-MiniLM-L6-v2",
+                model_name="BAAI/bge-small-en-v1.5",
                 model_kwargs={"device": "cpu"},
                 encode_kwargs={"normalize_embeddings": True}
             )
