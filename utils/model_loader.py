@@ -11,9 +11,12 @@ from exception.custom_exception import DocumentPortalException
 
 
 class ApiKeyManager:
-    REQUIRED_KEYS = ["GROQ_API_KEY", "GOOGLE_API_KEY"]
+    PROVIDER_KEYS = {
+        "groq": "GROQ_API_KEY",
+        "google": "GOOGLE_API_KEY",
+    }
 
-    def __init__(self):
+    def __init__(self, provider: str | None = None):
         self.api_keys = {}
         raw = os.getenv("API_KEYS")
 
@@ -27,21 +30,22 @@ class ApiKeyManager:
             except Exception as e:
                 log.warning("Failed to parse API_KEYS as JSON", error=str(e))
 
-        # Fallback to individual env vars
-        for key in self.REQUIRED_KEYS:
+        # Collect all known key env vars
+        all_env_keys = set(self.PROVIDER_KEYS.values())
+        for key in all_env_keys:
             if not self.api_keys.get(key):
                 env_val = os.getenv(key)
                 if env_val:
                     self.api_keys[key] = env_val
                     log.info(f"Loaded {key} from individual env var")
 
-        # Final check
-        missing = [k for k in self.REQUIRED_KEYS if not self.api_keys.get(k)]
-        if missing:
-            log.error("Missing required API keys", missing_keys=missing)
-            raise DocumentPortalException("Missing API keys", sys)
+        # Only require the key for the active provider
+        active_key = self.PROVIDER_KEYS.get(provider or os.getenv("LLM_PROVIDER", "groq"), "GROQ_API_KEY")
+        if not self.api_keys.get(active_key):
+            log.error("Missing required API key for active provider", key=active_key, provider=provider)
+            raise DocumentPortalException("Missing API key: " + active_key, sys)
 
-        log.info("API keys loaded", keys={k: v[:6] + "..." for k, v in self.api_keys.items()})
+        log.info("API key loaded", provider=provider, key=active_key)
 
 
     def get(self, key: str) -> str:
@@ -65,9 +69,11 @@ class ModelLoader:
 
         setup_langsmith()
 
-        self.api_key_mgr = ApiKeyManager()
         self.config = load_config()
         log.info("YAML config loaded", config_keys=list(self.config.keys()))
+
+        provider = os.getenv("LLM_PROVIDER", "groq").strip()
+        self.api_key_mgr = ApiKeyManager(provider=provider)
 
     def load_embeddings(self):
         """
@@ -103,7 +109,7 @@ class ModelLoader:
         Load and return the configured LLM model.
         """
         llm_block = self.config["llm"]
-        provider_key = (provider_key or os.getenv("LLM_PROVIDER", "google")).strip()
+        provider_key = (provider_key or os.getenv("LLM_PROVIDER", "groq")).strip()
 
         if provider_key not in llm_block:
             log.error("LLM provider not found in config", provider=provider_key)

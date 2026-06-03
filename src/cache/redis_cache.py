@@ -271,5 +271,22 @@ class RedisCache:
             return {"status": "error", "error": str(e)}
 
 
-# Global cache instance — import this everywhere
-cache = RedisCache()
+_cache_instance: Optional["RedisCache"] = None
+
+
+def _get_cache() -> "RedisCache":
+    """Lazy singleton — only connects to Redis on first use, not at import time."""
+    global _cache_instance
+    if _cache_instance is None:
+        _cache_instance = RedisCache()
+    return _cache_instance
+
+
+class _CacheProxy:
+    """Proxy that delegates all attribute access to the lazy singleton."""
+
+    def __getattr__(self, name: str):
+        return getattr(_get_cache(), name)
+
+
+cache = _CacheProxy()
