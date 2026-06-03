@@ -23,7 +23,12 @@ import hashlib
 from typing import Any, Optional, Dict
 from datetime import timedelta
 
-import redis
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+
 from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
 
@@ -54,6 +59,11 @@ class RedisCache:
 
     def _connect(self):
         """Establish Redis connection with error handling."""
+        if not REDIS_AVAILABLE:
+            log.warning("redis package not installed — caching disabled. App will work without cache.")
+            self.client = None
+            return
+
         try:
             self.client = redis.from_url(
                 self.redis_url,

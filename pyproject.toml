@@ -30,15 +30,11 @@ dependencies = [
     "structlog==25.4.0",
     "docx2txt==0.9",
     "python-docx==1.1.2",
-    "streamlit==1.47.1",
-    "pytest==8.4.1",
     "pypdf==5.8.0",
     "rank_bm25==0.2.2",
     "python-jose[cryptography]==3.3.0",
     "passlib==1.7.4",
     "slowapi==0.1.9",
-    "redis==5.0.1",
-    "celery==5.3.6",
     "ragas==0.2.8",
     "datasets==2.18.0",
     "sentence-transformers>=2.2.0",
@@ -48,6 +44,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "pylint", "ipykernel"]
 
-[tool.setuptools]
-packages = ["api", "config", "exception", "infrastructure"]
+[tool.setuptools.packages.find]
+include = ["api*", "config*", "exception*", "infrastructure*", "src*", "utils*", "logger*", "model*", "prompt*"]
 
