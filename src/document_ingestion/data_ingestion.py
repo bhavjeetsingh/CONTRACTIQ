@@ -15,6 +15,7 @@ from utils.model_loader import ModelLoader
 from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
 from utils.document_ops import load_documents, concat_for_analysis, concat_for_comparison
+from utils.file_io import generate_session_id
 
 # Hardcode supported extensions locally to fix the import error from constants.py
 SUPPORTED_EXTENSIONS = {

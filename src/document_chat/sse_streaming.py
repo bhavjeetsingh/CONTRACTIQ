@@ -124,9 +124,12 @@ async def stream_rag_response(
             # Stream the fallback response
             callback = StreamingCallbackHandler()
             try:
+                # Inject streaming callback into LLM before invoke
+                rag_fallback.llm.callbacks = [callback]
+
                 # Run in background and stream tokens
                 task = asyncio.create_task(
-                    rag_fallback.ainvoke(question, chat_history=[], callbacks=[callback])
+                    asyncio.to_thread(rag_fallback.invoke, question, [])
                 )
                 full_response = ""
                 async for token in callback.token_generator():
