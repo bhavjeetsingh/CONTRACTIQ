@@ -21,11 +21,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: contractiq-redis
-    ports:
-      - "6379:6379"
+    # Redis is NOT exposed to host — only accessible via app network
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:-changeme}"
 
   celery_worker:
     build: .

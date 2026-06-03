@@ -25,4 +25,6 @@ redis==5.0.1
 celery==5.3.6
 ragas==0.2.8
 datasets==2.18.0
+sentence-transformers>=2.2.0
+langchain-huggingface>=0.0.1
 -e .

@@ -29,20 +29,8 @@ except ImportError:
 
 class ContractEvalSuite:
     """
-    Pre-built evaluation suite for legal contract QnA.
-    Contains standard test cases covering common contract questions.
+    Evaluation suite for legal contract QnA using a provided golden dataset.
     """
-
-    STANDARD_TEST_CASES = [
-        {
-            "question": "Who are the parties involved in this agreement?",
-            "ground_truth": "The names and roles of all parties in the contract.",
-        },
-        {
-            "question": "What are the payment terms?",
-            "ground_truth": "The payment schedule, amounts, and conditions specified.",
-        },
-    ]
 
     @staticmethod
     def run_eval_with_rag(
@@ -54,7 +42,10 @@ class ContractEvalSuite:
         Run evaluation by passing test questions through your RAG pipeline,
         then optionally score them via RAGAS.
         """
-        cases = test_cases or ContractEvalSuite.STANDARD_TEST_CASES
+        if not test_cases:
+            raise ValueError("No evaluation dataset provided. You MUST provide a custom golden dataset file (e.g., 40 questions).")
+            
+        cases = test_cases
         results = []
         
         # Data dictionary constructed for RAGAS
@@ -100,40 +91,66 @@ class ContractEvalSuite:
                     "answer": f"ERROR: {str(e)}",
                     "ground_truth": case.get("ground_truth", "")
                 })
-            
-            # Rate limiting mitigation
-            log.info("Sleeping for 60 seconds to respect API rate limits...")
-            time.sleep(60)
+                
+            # Sleep 60 seconds to avoid hitting Gemini free-tier rate limits (15 RPM)
+            # time.sleep(60)
 
         scores = {}
         
         if RAGAS_AVAILABLE and len(data_for_ragas["question"]) > 0:
-            log.info("Sleeping before RAGAS to reset rate limit quota...")
-            time.sleep(60)
-            log.info("Starting RAGAS Scoring Phase. (This might take a while and makes additional API calls)...")
+            log.info("Starting RAGAS Scoring Phase...")
             try:
                 dataset = Dataset.from_dict(data_for_ragas)
                 metrics = [faithfulness, answer_relevancy] # Reduced metrics to limit API usage
                 
+                # Use HuggingFace for evaluation
+                from langchain_huggingface import HuggingFaceEndpoint
+                
+                # Retrieve Hugging Face API key
+                hf_token = os.getenv("HUGGINGFACE_API_KEY") or os.getenv("HF_TOKEN")
+                if not hf_token:
+                    log.warning("Hugging Face API key not found. Using OpenAI as fallback to avoid n>1 errors.")
+                    from langchain_openai import ChatOpenAI
+                    eval_llm = ChatOpenAI(
+                        model="gpt-3.5-turbo",
+                        temperature=0,
+                        max_retries=10
+                    )
+                else:
+                    eval_llm = HuggingFaceEndpoint(
+                        repo_id="meta-llama/Meta-Llama-3-8B-Instruct",
+                        task="text-generation",
+                        huggingfacehub_api_token=hf_token,
+                        temperature=0.1,
+                        max_new_tokens=1024,
+                    )
+                
+                os.environ["LANGCHAIN_TRACING_V2"] = "false"
+
                 eval_kwargs = {
                     "dataset": dataset,
                     "metrics": metrics,
+                    "llm": eval_llm,
+                    "embeddings": rag_instance.model_loader.load_embeddings(),
                     # limit max_workers to 1 to reduce parallel rate limit errors during RAGAS evaluations
-                    "run_config": RunConfig(max_workers=1, max_retries=3)
+                    "run_config": RunConfig(max_workers=1, max_retries=10)
                 }
                 
-                # Optional: Explicitly pass your loaded LLM / Embeddings if required by Ragas 
-                if rag_instance.llm:
-                    eval_kwargs["llm"] = rag_instance.llm
-                if hasattr(rag_instance, "model_loader"):
-                    eval_kwargs["embeddings"] = rag_instance.model_loader.load_embeddings()
+                # By specifying ChatGroq, Ragas will automatically use it (via GROQ_API_KEY).
 
                 evaluation = evaluate(**eval_kwargs)
-                scores = dict(evaluation)
+                os.environ["LANGCHAIN_TRACING_V2"] = "true"
+                
+                try:
+                    scores = {k: v for k, v in evaluation.items()}
+                except Exception:
+                    scores = {"metrics": str(evaluation)}
                 log.info("RAGAS numerical scores calculated successfully", scores=scores)
             except Exception as e:
-                log.error("RAGAS Evaluation failed. This is often due to missing OpenAI keys or Rate Limits.", error=str(e))
-                scores = {"error": f"Evaluation crashed: {str(e)}"}
+                import traceback
+                error_trace = traceback.format_exc()
+                log.error("RAGAS Evaluation failed.", error=str(e), exc_info=True)
+                scores = {"error": f"Evaluation crashed: {str(e)}", "traceback": error_trace}
         else:
             log.info("Skipping RAGAS scoring (ragas not installed or no valid answers)")
 

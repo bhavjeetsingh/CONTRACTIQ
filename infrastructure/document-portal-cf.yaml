@@ -135,13 +135,13 @@ Resources:
   ECSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP access to container
+      GroupDescription: Allow HTTP access to container from ALB only
       VpcId: !Ref MyVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: 0.0.0.0/0
+          CidrIp: 10.0.0.0/16
 
   ### ECS Task Definition
   ECSTaskDefinition:

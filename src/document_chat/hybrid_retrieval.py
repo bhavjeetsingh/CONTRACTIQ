@@ -483,28 +483,3 @@ Answer:"""
         except Exception as e:
             log.error("Failed to invoke ContractRAG", error=str(e), session_id=self.session_id)
             raise DocumentPortalException("Failed to invoke ContractRAG", e) from e
-            source_docs = result.get("context", [])
-
-            log.info(
-                "ContractRAG response generated",
-                session_id=self.session_id,
-                sources=len(source_docs),
-                answer_length=len(answer),
-            )
-
-            return {
-                "answer": answer,
-                "source_documents": [
-                    {
-                        "content": doc.page_content[:200],
-                        "metadata": doc.metadata,
-                    }
-                    for doc in source_docs
-                ],
-                "retriever_type": "parent" if self.use_parent_retriever else "hybrid",
-                "session_id": self.session_id,
-            }
-
-        except Exception as e:
-            log.error("ContractRAG invocation failed", error=str(e), session_id=self.session_id)
-            raise DocumentPortalException("RAG invocation failed", e) from e

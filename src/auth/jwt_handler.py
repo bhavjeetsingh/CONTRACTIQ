@@ -1,13 +1,20 @@
 import os
-from datetime import datetime, timedelta
+import json
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-in-production-use-secrets-manager")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    import secrets
+    SECRET_KEY = secrets.token_hex(32)
+    import sys as _sys
+    print("[WARNING] SECRET_KEY not set — generated ephemeral key. Tokens will NOT survive restarts. Set SECRET_KEY env var for production.", file=_sys.stderr)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
@@ -32,9 +39,22 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
 
-# --- In-memory user store (replace with PostgreSQL later) ---
-# Structure: { "email": "hashed_password" }
-_users_db: dict = {}
+# --- Persistent user store (JSON file — replace with PostgreSQL for real production) ---
+_USERS_FILE = Path(os.getenv("USERS_DB_PATH", "data/users.json"))
+
+def _load_users() -> dict:
+    if _USERS_FILE.exists():
+        try:
+            return json.loads(_USERS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def _save_users(db: dict):
+    _USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _USERS_FILE.write_text(json.dumps(db, indent=2), encoding="utf-8")
+
+_users_db: dict = _load_users()
 
 # --- Password helpers ---
 
@@ -48,7 +68,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -75,12 +95,18 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> TokenData:
 # --- Auth operations ---
 
 def register_user(email: str, password: str) -> dict:
+    import re
+    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     if email in _users_db:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
     _users_db[email] = hash_password(password)
+    _save_users(_users_db)
     return {"message": "User registered successfully", "email": email}
 
 def login_user(email: str, password: str) -> Token:

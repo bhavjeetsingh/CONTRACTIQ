@@ -18,7 +18,7 @@ from src.document_ingestion.data_ingestion import (
     ChatIngestor,
 )
 from src.eval.ragas_evaluator import ContractEvalSuite
-from constants import SUPPORTED_EXTENSIONS
+from constants import SUPPORTED_EXTENSIONS, MAX_UPLOAD_SIZE_BYTES
 from src.document_analyzer.data_analysis import DocumentAnalyzer
 from src.document_compare.document_comparator import DocumentComparatorLLM
 from src.document_chat.retrieval import ConversationalRAG
@@ -47,11 +47,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -116,6 +117,15 @@ async def analyze_document(
                 detail=f"Unsupported file type: {file_ext}. Supported formats: {supported_formats}"
             )
         
+        # Validate file size
+        file_content = await file.read()
+        if len(file_content) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB"
+            )
+        await file.seek(0)
+        
         dh = DocHandler()
         saved_path = dh.save_document(FastAPIFileAdapter(file))  # Updated to use save_document
         text = dh.read_document(saved_path)  # Updated to use read_document
@@ -132,7 +142,7 @@ async def analyze_document(
         raise
     except Exception as e:
         log.exception("Error during document analysis", filename=file.filename)
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Analysis failed. Check server logs for details.")
 
 # ---------- COMPARE ----------
 @limiter.limit("10/minute")
@@ -188,7 +198,7 @@ async def compare_documents(
         log.exception("Comparison failed", 
                      ref_file=reference.filename, 
                      act_file=actual.filename)
-        raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Comparison failed. Check server logs for details.")
 
 # ---------- CHAT: INDEX (Hybrid RAG) ----------
 @limiter.limit("5/minute")
@@ -266,7 +276,7 @@ async def chat_build_index(
         raise
     except Exception as e:
         log.exception("Chat index building failed")
-        raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
+        raise HTTPException(status_code=500, detail="Indexing failed. Check server logs for details.")
 # ---------- CHAT: QUERY (Hybrid RAG) ----------
 @limiter.limit("20/minute")
 @app.post("/chat/query")
@@ -353,13 +363,13 @@ async def chat_query(
         raise
     except Exception as e:
         log.exception("Chat query failed")
-        raise HTTPException(status_code=500, detail=f"Query failed: {e}")
+        raise HTTPException(status_code=500, detail="Query failed. Check server logs for details.")
  
     
 # ---------- UTILITY ENDPOINTS ----------
 
 @app.get("/sessions")
-async def list_sessions() -> Dict[str, Any]:
+async def list_sessions(current_user: TokenData = Depends(get_current_user)) -> Dict[str, Any]:
     """List available chat sessions"""
     try:
         sessions = []
@@ -379,10 +389,10 @@ async def list_sessions() -> Dict[str, Any]:
         
     except Exception as e:
         log.exception("Failed to list sessions")
-        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list sessions.")
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str) -> Dict[str, str]:
+async def delete_session(session_id: str, current_user: TokenData = Depends(get_current_user)) -> Dict[str, str]:
     """Delete a specific chat session"""
     try:
         import shutil
@@ -399,7 +409,7 @@ async def delete_session(session_id: str) -> Dict[str, str]:
         raise
     except Exception as e:
         log.exception("Failed to delete session", session_id=session_id)
-        raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete session.")
 
 # cache stats for monitoring
 @app.get("/cache/stats")
@@ -504,7 +514,7 @@ async def evaluate_rag(
         raise
     except Exception as e:
         log.exception("Evaluation failed")
-        raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}")
+        raise HTTPException(status_code=500, detail="Evaluation failed. Check server logs.")
     
 # eval scores endpoint
 @app.get("/eval/latest")
