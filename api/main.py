@@ -28,6 +28,7 @@ from src.auth.jwt_handler import (
     UserCreate, Token, register_user, 
     login_user, get_current_user, TokenData
 )
+from langchain_core.messages import HumanMessage, AIMessage
 
 FAISS_BASE = os.getenv("FAISS_BASE", "faiss_index")
 UPLOAD_BASE = os.getenv("UPLOAD_BASE", "data")
@@ -209,8 +210,8 @@ async def chat_build_index(
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
     use_session_dirs: bool = Form(True),
-    chunk_size: int = Form(1000),
-    chunk_overlap: int = Form(200),
+    chunk_size: int = Form(1500),
+    chunk_overlap: int = Form(300),
     k: int = Form(5),
     use_parent_retriever: bool = Form(False),
     current_user: TokenData = Depends(get_current_user)
@@ -294,12 +295,22 @@ async def chat_query(
  
         if use_session_dirs and not session_id:
             raise HTTPException(status_code=400, detail="session_id required")
+
+        # --- Load conversation history from Redis ---
+        raw_history = cache.get_history(session_id, max_turns=20) if session_id else []
+        chat_history = []
+        for turn in raw_history:
+            if turn["role"] == "user":
+                chat_history.append(HumanMessage(content=turn["content"]))
+            elif turn["role"] == "assistant":
+                chat_history.append(AIMessage(content=turn["content"]))
  
         # --- Check cache first ---
         cached = cache.get(session_id, question, "hybrid")
         if cached:
             log.info("Returning cached response", session_id=session_id)
             cached["from_cache"] = True
+            cached["messages"] = raw_history + [{"role": "user", "content": question}, {"role": "assistant", "content": cached.get("answer", "")}]
             return cached
  
         # --- Get RAG from app state ---
@@ -319,7 +330,6 @@ async def chat_query(
                 )
                 faiss_dir = session_meta.get("faiss_dir")
                 if faiss_dir and os.path.isdir(faiss_dir):
-                    # Rebuild from saved FAISS index
                     from langchain_community.vectorstores import FAISS
                     from utils.model_loader import ModelLoader
                     loader = ModelLoader()
@@ -329,33 +339,41 @@ async def chat_query(
                         embeddings=embeddings,
                         allow_dangerous_deserialization=True,
                     )
-                    # Use basic retriever as fallback when rebuilding
                     rag_fallback = ConversationalRAG(session_id=session_id)
                     rag_fallback.load_retriever_from_faiss(
                         faiss_dir, k=k, index_name=FAISS_INDEX_NAME
                     )
-                    response = rag_fallback.invoke(question, chat_history=[])
+                    response = rag_fallback.invoke(question, chat_history=chat_history)
                     result = {
                         "answer": response,
                         "session_id": session_id,
                         "retriever_type": "basic-rebuild",
                         "from_cache": False,
                     }
-                    # Cache the rebuilt response
                     cache.set(result, session_id, question, "hybrid")
+                    cache.append_turn(session_id, "user", question)
+                    cache.append_turn(session_id, "assistant", response)
+                    result["messages"] = cache.get_history(session_id)
                     return result
  
-            # No session found at all
             index_dir = os.path.join(FAISS_BASE, session_id) if use_session_dirs else FAISS_BASE
             if not os.path.isdir(index_dir):
                 raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
  
-        # --- Invoke hybrid RAG ---
-        result = rag.invoke(question, chat_history=[])
+        # --- Invoke hybrid RAG with conversation history ---
+        result = rag.invoke(question, chat_history=chat_history)
         result["from_cache"] = False
- 
+
+        # --- Save turns to Redis ---
+        answer_text = result.get("answer", "")
+        cache.append_turn(session_id, "user", question)
+        cache.append_turn(session_id, "assistant", answer_text)
+
         # --- Store response in cache ---
         cache.set(result, session_id, question, "hybrid")
+
+        # --- Return full message history ---
+        result["messages"] = cache.get_history(session_id)
  
         log.info("Hybrid RAG query handled successfully")
         return result
@@ -365,7 +383,17 @@ async def chat_query(
     except Exception as e:
         log.exception("Chat query failed")
         raise HTTPException(status_code=500, detail="Query failed. Check server logs for details.")
- 
+
+# ---------- CHAT: CLEAR HISTORY ----------
+@app.post("/chat/new")
+async def chat_new(
+    request: Request,
+    session_id: str = Form(...),
+    current_user: TokenData = Depends(get_current_user)
+) -> Any:
+    cache.clear_history(session_id)
+    return {"status": "ok", "session_id": session_id}
+
     
 # ---------- UTILITY ENDPOINTS ----------
 

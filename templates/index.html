@@ -87,87 +87,47 @@
 
     <!-- ============== CHAT ============== -->
     <section id="tab-chat" class="tab-panel">
-      <div class="card">
-        <h2>💬 Chat with your Documents</h2>
-        <p class="muted">RAG flow: index documents first, then ask grounded questions from the built session.</p>
-
-        <div class="rag-steps">
-          <div class="step-pill">1. Upload + Index</div>
-          <div class="step-pill">2. Select Session</div>
-          <div class="step-pill">3. Ask + Inspect Retrieval</div>
-        </div>
-
-        <form id="form-chat-index" class="form-grid" onsubmit="return false;">
-          <div class="field">
-            <label for="chat-files">Upload files</label>
-            <input id="chat-files" type="file" multiple accept=".pdf,.docx,.txt,.md,.ppt,.pptx,.xlsx,.xls,.csv,.json,.rtf" />
-            <small class="help">You can select multiple files.</small>
-          </div>
-
-          <div class="grid-3">
-            <div class="field">
-              <label for="chat-k">Top-K</label>
-              <input id="chat-k" type="number" value="5" min="1" max="20" />
-            </div>
-            <div class="field toggle-row">
-              <label>Use Parent Retriever</label>
-              <label class="switch">
-                <input id="chat-parent" type="checkbox" />
-                <span class="slider"></span>
-              </label>
-            </div>
-            <div class="field toggle-row">
-              <label>Use session-based FAISS</label>
-              <label class="switch">
-                <input id="chat-sessionized" type="checkbox" checked />
-                <span class="slider"></span>
-              </label>
+      <div class="chat-wrapper">
+        <div class="chat-header">
+          <div class="chat-header-left">
+            <span class="chat-bot-icon">🤖</span>
+            <div>
+              <h3>ContractIQ Assistant</h3>
+              <small class="chat-status" id="chat-status">Ready</small>
             </div>
           </div>
-
-          <div class="actions">
-            <button id="btn-build" class="btn primary">Build / Update Index</button>
+          <div class="chat-header-actions">
+            <label class="btn small chat-upload-btn" title="Upload files">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload
+              <input id="chat-files" type="file" multiple accept=".pdf,.docx,.txt,.md,.ppt,.pptx,.xlsx,.xls,.csv,.json,.rtf" hidden />
+            </label>
+            <button id="btn-new-chat" class="btn small" title="New chat">New Chat</button>
           </div>
-        </form>
-
-        <div class="divider"></div>
-
-        <div class="session-toolbar">
-          <button id="btn-load-sessions" class="btn small">Load Sessions</button>
-          <select id="chat-session-list" class="session-select">
-            <option value="">No sessions loaded</option>
-          </select>
-          <button id="btn-use-session" class="btn small">Use Selected</button>
         </div>
 
-        <form id="form-chat-ask" class="form-grid" onsubmit="return false;">
-          <div class="field">
-            <label for="chat-q">Your Question</label>
-            <input id="chat-q" type="text" placeholder="Ask a question about your documents…" />
+        <div id="chat-messages" class="chat-messages">
+          <div class="chat-welcome">
+            <div class="welcome-icon">📄</div>
+            <h3>Ask anything about your contracts</h3>
+            <p>Upload documents to get started. I can analyze clauses, extract obligations, find key dates, and more.</p>
           </div>
-          <div class="actions">
-            <button id="btn-ask" class="btn">Send</button>
-          </div>
-        </form>
-
-        <div id="chat-meta" class="muted small"></div>
-
-        <div id="chat-ans" class="result-block">
-          <h3>Answer</h3>
-          <div class="answer" id="chat-answer">No answer yet.</div>
         </div>
 
-        <div id="chat-sources" class="result-block">
-          <h3>Retrieved Context</h3>
-          <div id="chat-sources-body" class="sources muted">No retrieval context yet.</div>
+        <div class="chat-input-area">
+          <form id="form-chat-ask" class="chat-input-form" onsubmit="return false;">
+            <input id="chat-q" type="text" placeholder="Ask a question about your documents..." autocomplete="off" />
+            <button id="btn-ask" class="btn-send" type="submit" title="Send">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </form>
         </div>
       </div>
     </section>
   </main>
 
   <footer class="app-footer">
-    <div>© ContractIQ • Demo UI</div>
-    <div class="tiny">Frontend only – hook to your FastAPI later.</div>
+    <div>© ContractIQ</div>
   </footer>
 
   <script>
@@ -196,6 +156,14 @@
   function checkAuth() {
     if (!authToken || !userEmail) {
       // Not logged in, redirect to login page
+      window.location.href = "/login";
+      return;
+    }
+    // Validate token format (basic check for JWT structure)
+    const parts = authToken.split('.');
+    if (parts.length !== 3) {
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("user_email");
       window.location.href = "/login";
       return;
     }
@@ -293,153 +261,331 @@
     }
   });
 
-  // ===== CHAT (index + ask) =====
+  // ===== CHAT =====
   let currentSession = null;
-  const DEFAULT_CHUNK_SIZE = 1000;
-  const DEFAULT_CHUNK_OVERLAP = 200;
+  let isProcessing = false;
+  const chatMessages = document.getElementById("chat-messages");
+  const chatStatus = document.getElementById("chat-status");
 
-  function renderRagMeta(lines = []) {
-    const meta = document.getElementById("chat-meta");
-    meta.textContent = lines.filter(Boolean).join(" | ");
+  function setStatus(text) { chatStatus.textContent = text; }
+  function scrollToBottom() { chatMessages.scrollTop = chatMessages.scrollHeight; }
+
+  function clearChat() {
+    chatMessages.innerHTML = `<div class="chat-welcome"><div class="welcome-icon">📄</div><h3>Ask anything about your contracts</h3><p>Upload documents to get started.</p></div>`;
   }
 
-  function renderSources(payload) {
-    const wrap = document.getElementById("chat-sources-body");
-    const sources = payload?.source_documents || payload?.sources || [];
-    if (!Array.isArray(sources) || !sources.length) {
-      wrap.textContent = "No retrieval context returned by backend for this response.";
-      return;
-    }
+  function renderMessage(role, content) {
+    const welcome = chatMessages.querySelector(".chat-welcome");
+    if (welcome) welcome.remove();
 
-    const max = Math.min(sources.length, 3);
-    const rows = [];
-    for (let i = 0; i < max; i++) {
-      const src = sources[i] || {};
-      const text = (src.content || src.page_content || JSON.stringify(src)).toString();
-      const preview = text.length > 260 ? text.slice(0, 260) + "..." : text;
-      rows.push(`<div class="source-item"><strong>Chunk ${i + 1}</strong><p>${preview}</p></div>`);
-    }
-    wrap.innerHTML = rows.join("");
+    const msg = document.createElement("div");
+    msg.className = `chat-msg ${role === "user" ? "user" : "bot"}`;
+
+    const avatar = document.createElement("div");
+    avatar.className = "msg-avatar";
+    avatar.textContent = role === "user" ? "👤" : "🤖";
+
+    const body = document.createElement("div");
+    body.className = "msg-body";
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+    bubble.textContent = content;
+    body.appendChild(bubble);
+
+    msg.appendChild(avatar);
+    msg.appendChild(body);
+    chatMessages.appendChild(msg);
   }
 
-  document.getElementById("btn-load-sessions").addEventListener("click", async () => {
-    const meta = document.getElementById("chat-meta");
-    const select = document.getElementById("chat-session-list");
-    try {
-      meta.textContent = "Fetching sessions...";
-      const headers = {};
-      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
-      const res = await fetch(`${API_BASE}/sessions`, { method: "GET", headers });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      const sessions = json.sessions || [];
-      if (!sessions.length) {
-        select.innerHTML = `<option value="">No sessions found</option>`;
-        meta.textContent = "No saved sessions available.";
-        return;
-      }
-      select.innerHTML = sessions.map(s => `<option value="${s.session_id}">${s.session_id}</option>`).join("");
-      meta.textContent = `Loaded ${sessions.length} sessions.`;
-    } catch (e) {
-      meta.textContent = "Session load failed: " + (e.message || e);
+  function renderFullHistory(messages) {
+    chatMessages.innerHTML = "";
+    if (!messages || !messages.length) { clearChat(); return; }
+    messages.forEach(m => renderMessage(m.role, m.content));
+    scrollToBottom();
+  }
+
+  function addBotMessage(text, sources) {
+    const welcome = chatMessages.querySelector(".chat-welcome");
+    if (welcome) welcome.remove();
+
+    const msg = document.createElement("div");
+    msg.className = "chat-msg bot";
+
+    const avatar = document.createElement("div");
+    avatar.className = "msg-avatar";
+    avatar.textContent = "🤖";
+
+    const body = document.createElement("div");
+    body.className = "msg-body";
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+    bubble.textContent = text;
+    body.appendChild(bubble);
+
+    if (sources && sources.length) {
+      const srcWrap = document.createElement("div");
+      srcWrap.className = "msg-sources";
+      sources.slice(0, 3).forEach(s => {
+        const file = s.metadata?.source?.split(/[\\/]/).pop() || "document";
+        const page = s.metadata?.page ?? "";
+        const snippet = (s.page_content || s.content || "").slice(0, 200);
+        const src = document.createElement("div");
+        src.className = "source-chip";
+        src.innerHTML = `<span class="src-file">📄 ${file}${page ? " p." + page : ""}</span><span class="src-text">${snippet}...</span>`;
+        srcWrap.appendChild(src);
+      });
+      body.appendChild(srcWrap);
     }
-  });
 
-  document.getElementById("btn-use-session").addEventListener("click", () => {
-    const selected = document.getElementById("chat-session-list").value;
-    if (!selected) return;
-    currentSession = selected;
-    renderRagMeta([`Session selected: ${selected}`]);
-  });
+    msg.appendChild(avatar);
+    msg.appendChild(body);
+    chatMessages.appendChild(msg);
+    scrollToBottom();
+  }
 
-  document.getElementById("btn-build").addEventListener("click", async () => {
-    const files     = document.getElementById("chat-files").files;
-    const sessionId = currentSession || "";
-    const useSess   = document.getElementById("chat-sessionized").checked;
-    const useParent = document.getElementById("chat-parent").checked;
-    const k         = +document.getElementById("chat-k").value || 5;
-    const chunk     = DEFAULT_CHUNK_SIZE;
-    const overlap   = DEFAULT_CHUNK_OVERLAP;
-    const meta      = document.getElementById("chat-meta");
+  function addTyping() {
+    const msg = document.createElement("div");
+    msg.className = "chat-msg bot";
+    msg.id = "typing-indicator";
+    msg.innerHTML = `<div class="msg-avatar">🤖</div><div class="msg-body"><div class="msg-bubble"><span class="typing-dots"><span></span><span></span><span></span></span></div></div>`;
+    chatMessages.appendChild(msg);
+    scrollToBottom();
+  }
 
-    if (!files.length) { meta.textContent = "Please upload at least one file."; return; }
+  function removeTyping() {
+    const el = document.getElementById("typing-indicator");
+    if (el) el.remove();
+  }
 
+  async function autoBuildIndex(files) {
+    if (isProcessing || !files.length) return;
+    isProcessing = true;
+    setStatus("Indexing " + files.length + " file(s)...");
     try {
-      meta.textContent = "Building index…";
-
       const fd = new FormData();
-      [...files].forEach(f => fd.append("files", f)); // <-- must be 'files'
-      if (sessionId) fd.append("session_id", sessionId);
-      fd.append("use_session_dirs", useSess ? "true" : "false");
-      fd.append("use_parent_retriever", useParent ? "true" : "false");
-      fd.append("chunk_size", String(chunk));
-      fd.append("chunk_overlap", String(overlap));
-      fd.append("k", String(k));
+      [...files].forEach(f => fd.append("files", f));
+      fd.append("use_session_dirs", "true");
+      fd.append("use_parent_retriever", "false");
+      fd.append("chunk_size", "1500");
+      fd.append("chunk_overlap", "300");
+      fd.append("k", "5");
 
       const headers = {};
       if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
       const res = await fetch(`${API_BASE}/chat/index`, { method: "POST", body: fd, headers });
       if (!res.ok) {
-        const err = await res.json().catch(()=>({detail:res.statusText}));
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
-      const json = await res.json(); // { session_id, k, use_session_dirs }
-      currentSession = json.session_id || currentSession || null;
-      renderRagMeta([
-        `Indexed session: ${currentSession || "(none)"}`,
-        `Retriever: ${json.retriever_type || (useParent ? "parent" : "hybrid")}`,
-        `Top-K: ${json.k ?? k}`,
-        `Files: ${json.files_indexed ?? files.length}`,
-      ]);
+      const json = await res.json();
+      currentSession = json.session_id;
+      setStatus("Indexed " + (json.files_indexed || files.length) + " file(s)");
+      addBotMessage("I've indexed " + (json.files_indexed || files.length) + " document(s). Ask me anything!");
     } catch (e) {
-      meta.textContent = "Indexing failed: " + (e.message || e);
+      setStatus("Index failed");
+      addBotMessage("Failed to index: " + e.message);
+    } finally {
+      isProcessing = false;
+    }
+  }
+
+  // Auto-index when files are selected
+  document.getElementById("chat-files").addEventListener("change", (e) => {
+    if (e.target.files.length) autoBuildIndex(e.target.files);
+  });
+
+  // New chat
+  document.getElementById("btn-new-chat").addEventListener("click", async () => {
+    if (currentSession) {
+      try {
+        const fd = new FormData();
+        fd.append("session_id", currentSession);
+        const headers = {};
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+        await fetch(`${API_BASE}/chat/new`, { method: "POST", body: fd, headers });
+      } catch (e) {}
+    }
+    currentSession = null;
+    clearChat();
+    setStatus("Ready");
+    document.getElementById("chat-files").value = "";
+  });
+
+  // Enter to send
+  document.getElementById("chat-q").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById("btn-ask").click();
     }
   });
 
   document.getElementById("btn-ask").addEventListener("click", async () => {
-    const q        = document.getElementById("chat-q").value.trim();
-    const ans      = document.getElementById("chat-answer");
-    const useSess  = document.getElementById("chat-sessionized").checked;
-    const k        = +document.getElementById("chat-k").value || 5;
-
-    if (!q) { ans.textContent = "Please enter a question."; return; }
-    if (useSess && !currentSession) {
-      ans.textContent = "Build the index first (session-based mode is ON).";
-      return;
+    const q = document.getElementById("chat-q").value.trim();
+    if (!q || isProcessing) return;
+    if (!currentSession) {
+      const files = document.getElementById("chat-files").files;
+      if (files.length) await autoBuildIndex(files);
+      if (!currentSession) { addBotMessage("Please upload documents first."); return; }
     }
 
-    try {
-      ans.textContent = "Thinking…";
+    // Show user message immediately
+    renderMessage("user", q);
+    document.getElementById("chat-q").value = "";
+    isProcessing = true;
+    setStatus("Thinking...");
+    addTyping();
 
+    try {
       const fd = new FormData();
       fd.append("question", q);
-      fd.append("use_session_dirs", useSess ? "true" : "false");
-      fd.append("k", String(k));
-      if (useSess && currentSession) fd.append("session_id", currentSession);
+      fd.append("use_session_dirs", "true");
+      fd.append("k", "5");
+      fd.append("session_id", currentSession);
 
       const headers = {};
       if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
       const res = await fetch(`${API_BASE}/chat/query`, { method: "POST", body: fd, headers });
       if (!res.ok) {
-        const err = await res.json().catch(()=>({detail:res.statusText}));
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
-      const json = await res.json(); // { answer, ... }
-      ans.textContent = typeof json.answer === "string"
-        ? json.answer
-        : JSON.stringify(json.answer ?? "No answer.", null, 2);
-      renderRagMeta([
-        `Session: ${json.session_id || currentSession || "(none)"}`,
-        `Retriever: ${json.retriever_type || "hybrid"}`,
-        `From cache: ${json.from_cache ? "yes" : "no"}`,
-      ]);
-      renderSources(json);
+      const json = await res.json();
+      removeTyping();
+
+      // Use full message history from server if available
+      if (json.messages && json.messages.length) {
+        renderFullHistory(json.messages);
+      } else {
+        const answer = typeof json.answer === "string" ? json.answer : JSON.stringify(json.answer ?? "No answer.", null, 2);
+        addBotMessage(answer, json.source_documents || null);
+      }
+      setStatus("Ready");
     } catch (e) {
-      ans.textContent = "Query failed: " + (e.message || e);
-      renderSources({});
+      removeTyping();
+      addBotMessage("Error: " + e.message);
+      setStatus("Error");
+    } finally {
+      isProcessing = false;
+    }
+  });
+      body.appendChild(srcWrap);
+    }
+
+    msg.appendChild(avatar);
+    msg.appendChild(body);
+    chatMessages.appendChild(msg);
+    scrollToBottom();
+  }
+
+  function addTyping() {
+    const msg = document.createElement("div");
+    msg.className = "chat-msg bot";
+    msg.id = "typing-indicator";
+    msg.innerHTML = `<div class="msg-avatar">🤖</div><div class="msg-body"><div class="msg-bubble"><span class="typing-dots"><span></span><span></span><span></span></span></div></div>`;
+    chatMessages.appendChild(msg);
+    scrollToBottom();
+  }
+
+  function removeTyping() {
+    const el = document.getElementById("typing-indicator");
+    if (el) el.remove();
+  }
+
+  async function autoBuildIndex(files) {
+    if (isProcessing || !files.length) return;
+    isProcessing = true;
+    setStatus("Indexing " + files.length + " file(s)...");
+    try {
+      const fd = new FormData();
+      [...files].forEach(f => fd.append("files", f));
+      fd.append("use_session_dirs", "true");
+      fd.append("use_parent_retriever", "false");
+      fd.append("chunk_size", "1500");
+      fd.append("chunk_overlap", "300");
+      fd.append("k", "5");
+
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${API_BASE}/chat/index`, { method: "POST", body: fd, headers });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      currentSession = json.session_id;
+      setStatus("Indexed " + (json.files_indexed || files.length) + " file(s)");
+      addMessage("I've indexed " + (json.files_indexed || files.length) + " document(s). Ask me anything about them!");
+    } catch (e) {
+      setStatus("Index failed");
+      addMessage("Failed to index: " + e.message);
+    } finally {
+      isProcessing = false;
+    }
+  }
+
+  // Auto-index when files are selected
+  document.getElementById("chat-files").addEventListener("change", (e) => {
+    if (e.target.files.length) autoBuildIndex(e.target.files);
+  });
+
+  // New chat button
+  document.getElementById("btn-new-chat").addEventListener("click", () => {
+    currentSession = null;
+    chatMessages.innerHTML = `<div class="chat-welcome"><div class="welcome-icon">📄</div><h3>Ask anything about your contracts</h3><p>Upload documents to get started.</p></div>`;
+    setStatus("Ready");
+    document.getElementById("chat-files").value = "";
+  });
+
+  // Enter to send
+  document.getElementById("chat-q").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById("btn-ask").click();
+    }
+  });
+
+  document.getElementById("btn-ask").addEventListener("click", async () => {
+    const q = document.getElementById("chat-q").value.trim();
+    if (!q || isProcessing) return;
+    if (!currentSession) {
+      const files = document.getElementById("chat-files").files;
+      if (files.length) await autoBuildIndex(files);
+      if (!currentSession) { addMessage("Please upload documents first."); return; }
+    }
+
+    addMessage(q, "user");
+    document.getElementById("chat-q").value = "";
+    isProcessing = true;
+    setStatus("Thinking...");
+    addTyping();
+
+    try {
+      const fd = new FormData();
+      fd.append("question", q);
+      fd.append("use_session_dirs", "true");
+      fd.append("k", "5");
+      fd.append("session_id", currentSession);
+
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${API_BASE}/chat/query`, { method: "POST", body: fd, headers });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      removeTyping();
+      const answer = typeof json.answer === "string" ? json.answer : JSON.stringify(json.answer ?? "No answer.", null, 2);
+      addMessage(answer, "bot", json.source_documents || null);
+      setStatus("Ready");
+    } catch (e) {
+      removeTyping();
+      addMessage("Error: " + e.message);
+      setStatus("Error");
+    } finally {
+      isProcessing = false;
     }
   });
 </script>

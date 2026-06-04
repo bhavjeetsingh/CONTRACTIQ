@@ -3,12 +3,14 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 
+load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     import secrets
@@ -79,12 +81,19 @@ def decode_token(token: str) -> TokenData:
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
+        import sys as _dbg
+        print(f"[DEBUG] SECRET_KEY loaded: {bool(SECRET_KEY)} (len={len(SECRET_KEY) if SECRET_KEY else 0})", file=_dbg.stderr)
+        print(f"[DEBUG] Token received: {token[:20]}... (len={len(token)})", file=_dbg.stderr)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print(f"[DEBUG] Payload: {payload}", file=_dbg.stderr)
         email: str = payload.get("sub")
         if email is None:
+            print("[DEBUG] No 'sub' in payload", file=_dbg.stderr)
             raise credentials_exception
+        print(f"[DEBUG] Auth OK for: {email}", file=_dbg.stderr)
         return TokenData(email=email)
-    except JWTError:
+    except JWTError as e:
+        print(f"[DEBUG] JWTError: {e}", file=_dbg.stderr)
         raise credentials_exception
 
 # --- Auth dependency (use this to protect routes) ---

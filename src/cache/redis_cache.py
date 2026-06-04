@@ -270,6 +270,45 @@ class RedisCache:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
+    # ---- Conversation History ----
+
+    def _history_key(self, session_id: str) -> str:
+        return f"{self.prefix}:history:{session_id}"
+
+    def append_turn(self, session_id: str, role: str, content: str, ttl: int = 86400) -> bool:
+        if not self.is_available:
+            return False
+        try:
+            key = self._history_key(session_id)
+            turn = json.dumps({"role": role, "content": content}, ensure_ascii=False)
+            self.client.rpush(key, turn)
+            self.client.expire(key, ttl)
+            return True
+        except Exception as e:
+            log.warning("Failed to append turn", error=str(e))
+            return False
+
+    def get_history(self, session_id: str, max_turns: int = 20) -> list:
+        if not self.is_available:
+            return []
+        try:
+            key = self._history_key(session_id)
+            raw = self.client.lrange(key, -max_turns * 2, -1)
+            return [json.loads(r) for r in raw]
+        except Exception as e:
+            log.warning("Failed to get history", error=str(e))
+            return []
+
+    def clear_history(self, session_id: str) -> bool:
+        if not self.is_available:
+            return False
+        try:
+            self.client.delete(self._history_key(session_id))
+            return True
+        except Exception as e:
+            log.warning("Failed to clear history", error=str(e))
+            return False
+
 
 _cache_instance: Optional["RedisCache"] = None
 

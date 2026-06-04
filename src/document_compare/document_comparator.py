@@ -17,7 +17,7 @@ class DocumentComparatorLLM:
         self.parser = JsonOutputParser(pydantic_object=SummaryResponse)
         self.fixing_parser = OutputFixingParser.from_llm(parser=self.parser, llm=self.llm)
         self.prompt = PROMPT_REGISTRY[PromptType.DOCUMENT_COMPARISON.value]
-        self.chain = self.prompt | self.llm | self.parser
+        self.chain = self.prompt | self.llm | self.fixing_parser
         log.info("DocumentComparatorLLM initialized", model=self.llm)
 
     def compare_documents(self, combined_docs: str) -> pd.DataFrame:
@@ -35,9 +35,24 @@ class DocumentComparatorLLM:
             log.error("Error in compare_documents", error=str(e))
             raise DocumentPortalException("Error comparing documents", sys)
 
-    def _format_response(self, response_parsed: list[dict]) -> pd.DataFrame: #type: ignore
+    def _format_response(self, response_parsed) -> pd.DataFrame:
         try:
-            df = pd.DataFrame(response_parsed)
+            if isinstance(response_parsed, list):
+                data = response_parsed
+            elif isinstance(response_parsed, dict):
+                data = response_parsed.get("changes", response_parsed.get("rows", [response_parsed]))
+            else:
+                data = []
+
+            cleaned = []
+            for item in data:
+                if isinstance(item, dict):
+                    cleaned.append({
+                        "Page": str(item.get("Page", item.get("page", ""))),
+                        "Changes": str(item.get("Changes", item.get("changes", "")))
+                    })
+
+            df = pd.DataFrame(cleaned, columns=["Page", "Changes"])
             return df
         except Exception as e:
             log.error("Error formatting response into DataFrame", error=str(e))
