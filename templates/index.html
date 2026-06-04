@@ -87,6 +87,7 @@
 
     <!-- ============== CHAT ============== -->
     <section id="tab-chat" class="tab-panel">
+      <div class="card">
       <div class="chat-wrapper">
         <div class="chat-header">
           <div class="chat-header-left">
@@ -97,12 +98,12 @@
             </div>
           </div>
           <div class="chat-header-actions">
-            <label class="btn small chat-upload-btn" title="Upload files">
+            <label class="btn primary small chat-upload-btn" title="Upload files">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Upload
               <input id="chat-files" type="file" multiple accept=".pdf,.docx,.txt,.md,.ppt,.pptx,.xlsx,.xls,.csv,.json,.rtf" hidden />
             </label>
-            <button id="btn-new-chat" class="btn small" title="New chat">New Chat</button>
+            <button id="btn-new-chat" class="btn primary small" title="New chat">New Chat</button>
           </div>
         </div>
 
@@ -117,11 +118,13 @@
         <div class="chat-input-area">
           <form id="form-chat-ask" class="chat-input-form" onsubmit="return false;">
             <input id="chat-q" type="text" placeholder="Ask a question about your documents..." autocomplete="off" />
-            <button id="btn-ask" class="btn-send" type="submit" title="Send">
+            <button id="btn-ask" class="btn primary" type="submit" title="Send">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              Send
             </button>
           </form>
         </div>
+      </div>
       </div>
     </section>
   </main>
@@ -391,12 +394,10 @@
     }
   }
 
-  // Auto-index when files are selected
   document.getElementById("chat-files").addEventListener("change", (e) => {
     if (e.target.files.length) autoBuildIndex(e.target.files);
   });
 
-  // New chat
   document.getElementById("btn-new-chat").addEventListener("click", async () => {
     if (currentSession) {
       try {
@@ -413,7 +414,6 @@
     document.getElementById("chat-files").value = "";
   });
 
-  // Enter to send
   document.getElementById("chat-q").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -430,7 +430,6 @@
       if (!currentSession) { addBotMessage("Please upload documents first."); return; }
     }
 
-    // Show user message immediately
     renderMessage("user", q);
     document.getElementById("chat-q").value = "";
     isProcessing = true;
@@ -454,7 +453,6 @@
       const json = await res.json();
       removeTyping();
 
-      // Use full message history from server if available
       if (json.messages && json.messages.length) {
         renderFullHistory(json.messages);
       } else {
@@ -465,124 +463,6 @@
     } catch (e) {
       removeTyping();
       addBotMessage("Error: " + e.message);
-      setStatus("Error");
-    } finally {
-      isProcessing = false;
-    }
-  });
-      body.appendChild(srcWrap);
-    }
-
-    msg.appendChild(avatar);
-    msg.appendChild(body);
-    chatMessages.appendChild(msg);
-    scrollToBottom();
-  }
-
-  function addTyping() {
-    const msg = document.createElement("div");
-    msg.className = "chat-msg bot";
-    msg.id = "typing-indicator";
-    msg.innerHTML = `<div class="msg-avatar">🤖</div><div class="msg-body"><div class="msg-bubble"><span class="typing-dots"><span></span><span></span><span></span></span></div></div>`;
-    chatMessages.appendChild(msg);
-    scrollToBottom();
-  }
-
-  function removeTyping() {
-    const el = document.getElementById("typing-indicator");
-    if (el) el.remove();
-  }
-
-  async function autoBuildIndex(files) {
-    if (isProcessing || !files.length) return;
-    isProcessing = true;
-    setStatus("Indexing " + files.length + " file(s)...");
-    try {
-      const fd = new FormData();
-      [...files].forEach(f => fd.append("files", f));
-      fd.append("use_session_dirs", "true");
-      fd.append("use_parent_retriever", "false");
-      fd.append("chunk_size", "1500");
-      fd.append("chunk_overlap", "300");
-      fd.append("k", "5");
-
-      const headers = {};
-      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
-      const res = await fetch(`${API_BASE}/chat/index`, { method: "POST", body: fd, headers });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      currentSession = json.session_id;
-      setStatus("Indexed " + (json.files_indexed || files.length) + " file(s)");
-      addMessage("I've indexed " + (json.files_indexed || files.length) + " document(s). Ask me anything about them!");
-    } catch (e) {
-      setStatus("Index failed");
-      addMessage("Failed to index: " + e.message);
-    } finally {
-      isProcessing = false;
-    }
-  }
-
-  // Auto-index when files are selected
-  document.getElementById("chat-files").addEventListener("change", (e) => {
-    if (e.target.files.length) autoBuildIndex(e.target.files);
-  });
-
-  // New chat button
-  document.getElementById("btn-new-chat").addEventListener("click", () => {
-    currentSession = null;
-    chatMessages.innerHTML = `<div class="chat-welcome"><div class="welcome-icon">📄</div><h3>Ask anything about your contracts</h3><p>Upload documents to get started.</p></div>`;
-    setStatus("Ready");
-    document.getElementById("chat-files").value = "";
-  });
-
-  // Enter to send
-  document.getElementById("chat-q").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      document.getElementById("btn-ask").click();
-    }
-  });
-
-  document.getElementById("btn-ask").addEventListener("click", async () => {
-    const q = document.getElementById("chat-q").value.trim();
-    if (!q || isProcessing) return;
-    if (!currentSession) {
-      const files = document.getElementById("chat-files").files;
-      if (files.length) await autoBuildIndex(files);
-      if (!currentSession) { addMessage("Please upload documents first."); return; }
-    }
-
-    addMessage(q, "user");
-    document.getElementById("chat-q").value = "";
-    isProcessing = true;
-    setStatus("Thinking...");
-    addTyping();
-
-    try {
-      const fd = new FormData();
-      fd.append("question", q);
-      fd.append("use_session_dirs", "true");
-      fd.append("k", "5");
-      fd.append("session_id", currentSession);
-
-      const headers = {};
-      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
-      const res = await fetch(`${API_BASE}/chat/query`, { method: "POST", body: fd, headers });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      removeTyping();
-      const answer = typeof json.answer === "string" ? json.answer : JSON.stringify(json.answer ?? "No answer.", null, 2);
-      addMessage(answer, "bot", json.source_documents || null);
-      setStatus("Ready");
-    } catch (e) {
-      removeTyping();
-      addMessage("Error: " + e.message);
       setStatus("Error");
     } finally {
       isProcessing = false;

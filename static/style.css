@@ -472,12 +472,9 @@ input:checked + .slider:before{transform:translateX(20px)}
 .chat-wrapper {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 140px);
+  height: calc(100vh - 200px);
   min-height: 500px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   overflow: hidden;
-  background: var(--surface);
 }
 
 .chat-header {
@@ -515,9 +512,6 @@ input:checked + .slider:before{transform:translateX(20px)}
 
 .chat-upload-btn {
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 
 /* Messages area */
@@ -714,22 +708,4 @@ input:checked + .slider:before{transform:translateX(20px)}
   color: var(--muted);
 }
 
-.btn-send {
-  width: 34px;
-  height: 34px;
-  border: none;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s;
-  flex-shrink: 0;
-}
-
-.btn-send:hover {
-  background: #6a8aff;
-  transform: scale(1.05);
-}
+/* Send button in chat uses .btn.primary */
