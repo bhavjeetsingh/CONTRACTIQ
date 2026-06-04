@@ -34,6 +34,9 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuse
 
 USER appuser
 
+COPY --chown=appuser:appuser start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 EXPOSE 8080
 
-CMD uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8080}
+ENTRYPOINT ["/bin/sh", "/app/start.sh"]
