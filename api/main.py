@@ -1,6 +1,4 @@
 import os
-from src.document_chat.hybrid_retrieval import ContractRAG
-from src.cache.redis_cache import cache
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
@@ -11,21 +9,18 @@ from pathlib import Path
 from utils.rate_limiter import limiter, get_user_identifier
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from src.cache.redis_cache import cache
 from src.document_chat.sse_streaming import router as stream_router, stream_rag_response
 from src.document_ingestion.data_ingestion import (
     DocHandler,
     DocumentComparator,
     ChatIngestor,
 )
-from src.eval.ragas_evaluator import ContractEvalSuite
 from constants import SUPPORTED_EXTENSIONS, MAX_UPLOAD_SIZE_BYTES
-from src.document_analyzer.data_analysis import DocumentAnalyzer
-from src.document_compare.document_comparator import DocumentComparatorLLM
-from src.document_chat.retrieval import ConversationalRAG
 from utils.document_ops import FastAPIFileAdapter, read_pdf_via_handler
 from logger import GLOBAL_LOGGER as log
 from src.auth.jwt_handler import (
-    UserCreate, Token, register_user, 
+    UserCreate, Token, register_user,
     login_user, get_current_user, TokenData
 )
 from langchain_core.messages import HumanMessage, AIMessage
@@ -135,6 +130,7 @@ async def analyze_document(
         if not text or not text.strip():
             raise HTTPException(status_code=400, detail="Document appears to be empty or unreadable")
         
+        from src.document_analyzer.data_analysis import DocumentAnalyzer
         analyzer = DocumentAnalyzer()
         result = analyzer.analyze_document(text)
         log.info("Document analysis complete.", file_type=file_ext, content_length=len(text))
@@ -186,6 +182,7 @@ async def compare_documents(
         if not combined_text or not combined_text.strip():
             raise HTTPException(status_code=400, detail="One or both documents appear to be empty or unreadable")
         
+        from src.document_compare.document_comparator import DocumentComparatorLLM
         comp = DocumentComparatorLLM()
         df = comp.compare_documents(combined_text)
         log.info("Document comparison completed.", 
@@ -243,6 +240,7 @@ async def chat_build_index(
  
         faiss_dir = os.path.join(FAISS_BASE, ci.session_id) if use_session_dirs else FAISS_BASE
  
+        from src.document_chat.hybrid_retrieval import ContractRAG
         rag = ContractRAG(
             session_id=ci.session_id,
             use_parent_retriever=use_parent_retriever,
@@ -323,6 +321,7 @@ async def chat_query(
  
             if session_meta:
                 log.info(f"Rebuilding RAG from Redis session metadata: {session_id}")
+                from src.document_chat.hybrid_retrieval import ContractRAG
                 rag = ContractRAG(
                     session_id=session_id,
                     use_parent_retriever=session_meta.get("use_parent_retriever", False),
@@ -339,6 +338,7 @@ async def chat_query(
                         embeddings=embeddings,
                         allow_dangerous_deserialization=True,
                     )
+                    from src.document_chat.retrieval import ConversationalRAG
                     rag_fallback = ConversationalRAG(session_id=session_id)
                     rag_fallback.load_retriever_from_faiss(
                         faiss_dir, k=k, index_name=FAISS_INDEX_NAME
@@ -525,6 +525,7 @@ async def evaluate_rag(
                 detail=f"Session not found: {session_id}. Index documents first."
             )
  
+        from src.eval.ragas_evaluator import ContractEvalSuite
         scores = ContractEvalSuite.run_eval_with_rag(rag)
  
         log.info("RAGAS evaluation complete", scores=scores)
