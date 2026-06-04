@@ -53,10 +53,21 @@ class DocumentAnalyzer:
 
         except Exception as e:
             err = str(e)
-            if "ResourceExhausted" in err or "quota" in err.lower() or "429" in err:
-                log.warning("Primary LLM quota exceeded; retrying with Groq fallback")
+            should_fallback = (
+                "ResourceExhausted" in err
+                or "quota" in err.lower()
+                or "429" in err
+                or "401" in err
+                or "invalid_api_key" in err.lower()
+                or "unauthorized" in err.lower()
+            )
+
+            if should_fallback:
+                log.warning("Primary LLM failed; attempting fallback", error=err)
                 try:
-                    fallback_llm = self.loader.load_llm("groq")
+                    current_provider = os.getenv("LLM_PROVIDER", "groq").strip()
+                    fallback_provider = "google" if current_provider == "groq" else "groq"
+                    fallback_llm = self.loader.load_llm(fallback_provider)
                     fallback_fixing_parser = OutputFixingParser.from_llm(
                         parser=self.parser,
                         llm=fallback_llm,
@@ -66,17 +77,17 @@ class DocumentAnalyzer:
                         "format_instructions": self.parser.get_format_instructions(),
                         "document_text": document_text,
                     })
-                    log.info("Metadata extraction successful using Groq fallback", keys=list(response.keys()))
+                    log.info("Metadata extraction successful using fallback", provider=fallback_provider, keys=list(response.keys()))
                     return response
                 except Exception as fallback_error:
                     log.error(
-                        "Metadata analysis failed after Groq fallback",
+                        "Metadata analysis failed after fallback",
                         primary_error=err,
                         fallback_error=str(fallback_error),
                     )
                     raise DocumentPortalException("Metadata extraction failed", sys)
 
             log.error("Metadata analysis failed", error=err)
-            raise DocumentPortalException("Metadata extraction failed",sys)
+            raise DocumentPortalException("Metadata extraction failed", sys)
         
     
