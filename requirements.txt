@@ -24,3 +24,9 @@ datasets==2.18.0
 sentence-transformers>=2.2.0
 langchain-huggingface>=0.0.1
 redis>=5.0.0
+
+# Phase 1 additions — OCR + LangGraph + Export
+easyocr>=1.7.0
+Pillow>=10.0.0
+langgraph>=0.2.0
+reportlab>=4.0.0

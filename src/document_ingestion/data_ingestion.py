@@ -17,9 +17,20 @@ from exception.custom_exception import DocumentPortalException
 from utils.document_ops import load_documents, concat_for_analysis, concat_for_comparison
 from utils.file_io import generate_session_id
 
+# OCR pipeline for scanned PDF and image fallback
+try:
+    from src.ocr.ocr_pipeline import ContractOCR, IMAGE_EXTENSIONS
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    IMAGE_EXTENSIONS = set()
+    log.warning("OCR pipeline not available. Install easyocr for scanned PDF support.")
+
 # Hardcode supported extensions locally to fix the import error from constants.py
 SUPPORTED_EXTENSIONS = {
-    ".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".json", ".rtf", ".ppt", ".pptx", ".xls", ".xlsx"
+    ".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".json", ".rtf", ".ppt", ".pptx", ".xls", ".xlsx",
+    # Image formats — processed via OCR pipeline
+    ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp",
 }
 
 # Import required libraries for document processing
@@ -103,6 +114,8 @@ class DocHandler:
                 return self._read_json(doc_path)
             elif file_ext == '.rtf':
                 return self._read_rtf(doc_path)
+            elif file_ext in IMAGE_EXTENSIONS:
+                return self._read_image(doc_path)
             else:
                 raise ValueError(f"Unsupported file extension: {file_ext}")
                 
@@ -111,7 +124,12 @@ class DocHandler:
             raise DocumentPortalException(f'Could not process document: {doc_path}', e) from e
 
     def _read_pdf(self, pdf_path: str) -> str:
-        """Read PDF documents using PyMuPDF"""
+        """
+        Read PDF documents using PyMuPDF with OCR fallback.
+        
+        If PyMuPDF extracts very little text (scanned PDF), automatically
+        falls back to OCR via EasyOCR for accurate text extraction.
+        """
         try:
             text_chunks = []
             with fitz.open(pdf_path) as doc:
@@ -122,6 +140,29 @@ class DocHandler:
                         text_chunks.append(f"\n--- Page {page_num + 1} ---\n{page_text}")
             
             text = "\n".join(text_chunks)
+            
+            # OCR fallback: if PyMuPDF extracted very little text, try OCR
+            if len(text.strip()) < 50 and OCR_AVAILABLE:
+                log.info(
+                    "PyMuPDF extracted minimal text, attempting OCR fallback",
+                    pdf_path=pdf_path,
+                    pymupdf_chars=len(text.strip()),
+                )
+                try:
+                    ocr = ContractOCR()
+                    ocr_result = ocr.extract_text(pdf_path)
+                    if ocr_result.text and len(ocr_result.text.strip()) > len(text.strip()):
+                        log.info(
+                            "OCR fallback successful",
+                            pdf_path=pdf_path,
+                            ocr_chars=len(ocr_result.text),
+                            confidence=round(ocr_result.confidence, 3),
+                            method=ocr_result.method,
+                        )
+                        return ocr_result.text
+                except Exception as ocr_err:
+                    log.warning("OCR fallback failed, using PyMuPDF result", error=str(ocr_err))
+            
             log.info("PDF read successfully", pdf_path=pdf_path, pages=len(text_chunks))
             return text
         except Exception as e:
@@ -339,6 +380,32 @@ class DocHandler:
             
         except Exception as e:
             raise DocumentPortalException(f"Error reading RTF: {rtf_path}", e) from e
+
+
+    def _read_image(self, image_path: str) -> str:
+        """
+        Read image files via OCR pipeline.
+        
+        Supports: PNG, JPG, JPEG, TIFF, BMP, WEBP
+        Requires easyocr to be installed.
+        """
+        if not OCR_AVAILABLE:
+            raise DocumentPortalException(
+                "OCR pipeline required for image files. Install: pip install easyocr",
+                None,
+            )
+        try:
+            ocr = ContractOCR()
+            result = ocr.extract_text(image_path)
+            log.info(
+                "Image read via OCR",
+                path=image_path,
+                chars=len(result.text),
+                confidence=round(result.confidence, 3),
+            )
+            return result.text
+        except Exception as e:
+            raise DocumentPortalException(f"Error reading image: {image_path}", e) from e
 
 
 class DocumentComparator:

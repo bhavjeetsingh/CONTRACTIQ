@@ -1,1 +1,1 @@
-# placeholder
+"""OCR Pipeline for ContractIQ."""
