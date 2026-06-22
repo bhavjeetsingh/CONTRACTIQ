@@ -16,6 +16,8 @@ from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
 from utils.document_ops import load_documents, concat_for_analysis, concat_for_comparison
 from utils.file_io import generate_session_id
+from src.database.supabase_client import is_supabase_active
+from src.database.supabase_storage import upload_file_to_supabase, download_file_from_supabase
 
 # OCR pipeline for scanned PDF and image fallback
 try:
@@ -80,11 +82,23 @@ class DocHandler:
                 raise ValueError(f'Unsupported file type: {file_ext}. Supported: {", ".join(SUPPORTED_EXTENSIONS)}')
             
             save_path = os.path.join(self.session_path, filename)
+            
+            if hasattr(uploaded_file, "read"):
+                file_bytes = uploaded_file.read()
+                if hasattr(uploaded_file, "seek"):
+                    uploaded_file.seek(0)
+            else:
+                file_bytes = uploaded_file.getbuffer()
+                
             with open(save_path, "wb") as f:
-                if hasattr(uploaded_file, "read"):
-                    f.write(uploaded_file.read())
-                else:
-                    f.write(uploaded_file.getbuffer())
+                f.write(file_bytes)
+                
+            # Sync to Supabase storage if active
+            if is_supabase_active():
+                try:
+                    upload_file_to_supabase("contracts", f"{self.session_id}/{filename}", file_bytes)
+                except Exception as e:
+                    log.error("Failed to sync file to Supabase storage during save", file=filename, error=str(e))
                     
             log.info("Document saved successfully", file=filename, type=file_ext, save_path=save_path, session_id=self.session_id)
             return save_path
@@ -96,6 +110,19 @@ class DocHandler:
         """Read any supported document type"""
         try:
             file_path = Path(doc_path)
+            
+            # Sync from Supabase storage if local file doesn't exist
+            if not file_path.exists() and is_supabase_active():
+                try:
+                    session_id = file_path.parent.name
+                    filename = file_path.name
+                    log.info("Local file not found, downloading from Supabase Storage", session_id=session_id, filename=filename)
+                    file_bytes = download_file_from_supabase("contracts", f"{session_id}/{filename}")
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_bytes(file_bytes)
+                except Exception as e:
+                    log.error("Failed to download file from Supabase storage during read", path=doc_path, error=str(e))
+            
             file_ext = file_path.suffix.lower()
             
             if file_ext == '.pdf':
@@ -122,6 +149,44 @@ class DocHandler:
         except Exception as e:
             log.error('Failed to read document', error=str(e), doc_path=doc_path, session_id=self.session_id)
             raise DocumentPortalException(f'Could not process document: {doc_path}', e) from e
+
+    def get_page_count(self, doc_path: str) -> int:
+        """
+        Compute or estimate the page count of the document.
+        """
+        try:
+            file_path = Path(doc_path)
+            
+            if not file_path.exists() and is_supabase_active():
+                try:
+                    session_id = file_path.parent.name
+                    filename = file_path.name
+                    file_bytes = download_file_from_supabase("contracts", f"{session_id}/{filename}")
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_bytes(file_bytes)
+                except Exception:
+                    pass
+            
+            if not file_path.exists():
+                return 1
+                
+            file_ext = file_path.suffix.lower()
+            if file_ext == '.pdf':
+                with fitz.open(doc_path) as doc:
+                    return doc.page_count
+            elif file_ext == '.docx':
+                try:
+                    from docx import Document as DocxDoc
+                    doc = DocxDoc(doc_path)
+                    words = sum(len(p.text.split()) for p in doc.paragraphs)
+                    return max(1, words // 300)
+                except Exception:
+                    text = self.read_document(doc_path)
+                    return max(1, len(text) // 2000)
+            else:
+                return 1
+        except Exception:
+            return 1
 
     def _read_pdf(self, pdf_path: str) -> str:
         """

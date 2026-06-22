@@ -23,6 +23,36 @@ from src.auth.jwt_handler import (
     UserCreate, Token, register_user,
     login_user, get_current_user, TokenData
 )
+import uuid
+from pydantic import BaseModel
+
+# Razorpay Config
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+razorpay_client = None
+if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+    try:
+        import razorpay
+        razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+        log.info("Razorpay billing client initialized successfully")
+    except Exception as e:
+        log.error("Failed to initialize Razorpay client", error=str(e))
+else:
+    log.warning("Razorpay keys not set. Running billing in MOCK mode.")
+
+class OrderRequest(BaseModel):
+    tier: str
+
+class PaymentVerifyRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+from src.database.supabase_client import is_supabase_active
+from src.database.supabase_db import (
+    check_user_limits, log_usage, save_rag_session,
+    get_rag_session, save_extraction_results
+)
 from langchain_core.messages import HumanMessage, AIMessage
 
 # Phase 1: LangGraph pipeline + Key-term extraction + Export
@@ -138,6 +168,14 @@ async def analyze_document(
         
         dh = DocHandler()
         saved_path = dh.save_document(FastAPIFileAdapter(file))  # Updated to use save_document
+        
+        # Check monthly limits
+        pages = dh.get_page_count(saved_path)
+        if current_user.id and not check_user_limits(current_user.id):
+            if os.path.exists(saved_path):
+                os.remove(saved_path)
+            raise HTTPException(status_code=402, detail="Monthly page limits exceeded. Please upgrade your subscription.")
+            
         text = dh.read_document(saved_path)  # Updated to use read_document
         
         if not text or not text.strip():
@@ -146,6 +184,11 @@ async def analyze_document(
         from src.document_analyzer.data_analysis import DocumentAnalyzer
         analyzer = DocumentAnalyzer()
         result = analyzer.analyze_document(text)
+        
+        # Log usage
+        if current_user.id:
+            log_usage(current_user.id, action="analyze", pages_processed=pages)
+            
         log.info("Document analysis complete.", file_type=file_ext, content_length=len(text))
         return JSONResponse(content=result)
         
@@ -190,6 +233,16 @@ async def compare_documents(
             FastAPIFileAdapter(reference), FastAPIFileAdapter(actual)
         )
         
+        # Check monthly limits
+        dh_temp = DocHandler(session_id=dc.session_id)
+        ref_pages = dh_temp.get_page_count(ref_path)
+        act_pages = dh_temp.get_page_count(act_path)
+        total_pages = ref_pages + act_pages
+        if current_user.id and not check_user_limits(current_user.id):
+            if os.path.exists(ref_path): os.remove(ref_path)
+            if os.path.exists(act_path): os.remove(act_path)
+            raise HTTPException(status_code=402, detail="Monthly page limits exceeded. Please upgrade your subscription.")
+            
         combined_text = dc.combine_documents()
         
         if not combined_text or not combined_text.strip():
@@ -198,6 +251,11 @@ async def compare_documents(
         from src.document_compare.document_comparator import DocumentComparatorLLM
         comp = DocumentComparatorLLM()
         df = comp.compare_documents(combined_text)
+        
+        # Log usage
+        if current_user.id:
+            log_usage(current_user.id, action="compare", pages_processed=total_pages)
+            
         log.info("Document comparison completed.", 
                 ref_type=ref_ext, 
                 act_type=act_ext,
@@ -238,6 +296,17 @@ async def chat_build_index(
         )
  
         paths = ci.save_files(wrapped)
+        
+        # Check monthly limits
+        dh_temp = DocHandler(session_id=ci.session_id)
+        total_pages = 0
+        for p in paths:
+            total_pages += dh_temp.get_page_count(p)
+        if current_user.id and not check_user_limits(current_user.id):
+            for p in paths:
+                if os.path.exists(p): os.remove(p)
+            raise HTTPException(status_code=402, detail="Monthly page limits exceeded. Please upgrade your subscription.")
+            
         docs = ci.prepare_documents(paths)
         
         # If not using ParentDocumentRetriever, we must chunk the docs here
@@ -265,14 +334,20 @@ async def chat_build_index(
         app.state.rag_sessions = getattr(app.state, "rag_sessions", {})
         app.state.rag_sessions[ci.session_id] = rag
  
-        # Store session metadata in Redis (survives restarts)
-        cache.store_rag_session(ci.session_id, {
+        session_meta = {
             "faiss_dir": faiss_dir,
             "k": k,
             "use_parent_retriever": use_parent_retriever,
             "files": [f.filename for f in files],
             "user": current_user.email,
-        })
+        }
+        # Store session metadata in Redis (survives restarts)
+        cache.store_rag_session(ci.session_id, session_meta)
+        
+        # Store in Supabase DB
+        if current_user.id:
+            save_rag_session(ci.session_id, current_user.id, session_meta)
+            log_usage(current_user.id, action="chat_index", pages_processed=total_pages)
  
         # Invalidate any old cached responses for this session
         cache.invalidate_session(ci.session_id)
@@ -331,6 +406,10 @@ async def chat_query(
         # --- Rebuild from Redis session metadata if app restarted ---
         if rag is None:
             session_meta = cache.get_rag_session(session_id)
+            if not session_meta:
+                session_meta = get_rag_session(session_id)
+                if session_meta:
+                    cache.store_rag_session(session_id, session_meta)
  
             if session_meta:
                 log.info(f"Rebuilding RAG from Redis session metadata: {session_id}")
@@ -376,6 +455,9 @@ async def chat_query(
         # --- Invoke hybrid RAG with conversation history ---
         result = rag.invoke(question, chat_history=chat_history)
         result["from_cache"] = False
+        
+        if current_user.id:
+            log_usage(current_user.id, action="chat_query", pages_processed=0)
 
         # --- Save turns to Redis ---
         answer_text = result.get("answer", "")
@@ -544,6 +626,12 @@ async def extract_key_terms(
         dh = DocHandler()
         saved_path = dh.save_document(FastAPIFileAdapter(file))
         
+        # Check monthly limits
+        pages = dh.get_page_count(saved_path)
+        if current_user.id and not check_user_limits(current_user.id):
+            if os.path.exists(saved_path): os.remove(saved_path)
+            raise HTTPException(status_code=402, detail="Monthly page limits exceeded. Please upgrade your subscription.")
+            
         if LANGGRAPH_PIPELINE_AVAILABLE:
             result = run_contract_pipeline(saved_path, request_type="extract")
             log.info("LangGraph extraction complete", method="langgraph")
@@ -557,6 +645,16 @@ async def extract_key_terms(
             log.info("Direct extraction complete", method="direct")
         else:
             raise HTTPException(status_code=501, detail="Extraction pipeline not available")
+            
+        # Log usage & save extractions
+        if current_user.id:
+            log_usage(current_user.id, action="extract", pages_processed=pages)
+            save_extraction_results(
+                session_id=dh.session_id,
+                user_id=current_user.id,
+                extracted_terms=result.get("key_terms", {}) or result.get("extracted_terms", {}),
+                confidence_scores=result.get("confidence_scores", {})
+            )
         
         return JSONResponse(content=result)
         
@@ -565,6 +663,101 @@ async def extract_key_terms(
     except Exception as e:
         log.exception("Key-term extraction failed", filename=file.filename)
         raise HTTPException(status_code=500, detail="Extraction failed. Check server logs.")
+
+
+# ---------- BILLING (Razorpay) ----------
+@app.post("/billing/order")
+def create_billing_order(
+    order_req: OrderRequest,
+    current_user: TokenData = Depends(get_current_user),
+) -> Any:
+    """
+    Generate a Razorpay Order ID for upgrading to Premium subscription.
+    """
+    try:
+        amount_paise = 49900  # ₹499 in paise
+        
+        if razorpay_client is not None:
+            order_data = {
+                "amount": amount_paise,
+                "currency": "INR",
+                "payment_capture": 1
+            }
+            order = razorpay_client.order.create(data=order_data)
+            # Inject key id so frontend knows which key to open checkout with
+            order["razorpay_key_id"] = RAZORPAY_KEY_ID
+            log.info("Created live Razorpay order", order_id=order["id"], user=current_user.email)
+            return order
+        else:
+            # Mock mode order response
+            mock_order = {
+                "id": f"order_mock_{uuid.uuid4().hex[:12]}",
+                "amount": amount_paise,
+                "currency": "INR",
+                "razorpay_key_id": "rzp_test_mockkey123"
+            }
+            log.info("Created mock Razorpay order", order_id=mock_order["id"], user=current_user.email)
+            return mock_order
+            
+    except Exception as e:
+        log.exception("Failed to create billing order")
+        raise HTTPException(status_code=500, detail="Failed to create checkout order.")
+
+
+@app.post("/billing/verify")
+def verify_billing_payment(
+    verify_req: PaymentVerifyRequest,
+    current_user: TokenData = Depends(get_current_user),
+) -> Any:
+    """
+    Verify the signature returned by Razorpay checkouts, and upgrade the user profile tier.
+    """
+    try:
+        signature_valid = False
+        
+        # Verify payment signature if running live
+        if razorpay_client is not None:
+            try:
+                razorpay_client.utility.verify_payment_signature({
+                    'razorpay_order_id': verify_req.razorpay_order_id,
+                    'razorpay_payment_id': verify_req.razorpay_payment_id,
+                    'razorpay_signature': verify_req.razorpay_signature
+                })
+                signature_valid = True
+                log.info("Razorpay signature verified successfully", order_id=verify_req.razorpay_order_id)
+            except Exception as e:
+                log.warning("Razorpay signature verification failed", error=str(e))
+                raise HTTPException(status_code=400, detail="Invalid payment signature.")
+        else:
+            # Mock verify: accept mock payment ids
+            if verify_req.razorpay_order_id.startswith("order_mock_"):
+                signature_valid = True
+                log.info("Mock Razorpay order verified successfully", order_id=verify_req.razorpay_order_id)
+            else:
+                log.warning("Mock Razorpay validation received non-mock order id", order_id=verify_req.razorpay_order_id)
+                raise HTTPException(status_code=400, detail="Invalid mock order format.")
+                
+        if signature_valid:
+            # Upgrade database profiles tier to premium
+            if is_supabase_active():
+                supabase_client.table("profiles").update({"subscription_tier": "premium"}).eq("id", current_user.id).execute()
+                log.info("Upgraded user profile in Supabase to premium", user_id=current_user.id)
+            else:
+                # Mock profiles file edit
+                from src.database.supabase_db import MOCK_PROFILES_FILE, _load_mock_file, _save_mock_file
+                db = _load_mock_file(MOCK_PROFILES_FILE)
+                if current_user.id in db:
+                    db[current_user.id]["subscription_tier"] = "premium"
+                    _save_mock_file(MOCK_PROFILES_FILE, db)
+                    log.info("Upgraded user profile in Mock DB to premium", user_id=current_user.id)
+                    
+            return {"status": "verified", "tier": "premium"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Payment verification exception")
+        raise HTTPException(status_code=500, detail="Internal validation failure.")
 
 
 # ---------- EXPORT ----------
@@ -652,6 +845,12 @@ async def analyze_document_v2(
         dh = DocHandler()
         saved_path = dh.save_document(FastAPIFileAdapter(file))
         
+        # Check monthly limits
+        pages = dh.get_page_count(saved_path)
+        if current_user.id and not check_user_limits(current_user.id):
+            if os.path.exists(saved_path): os.remove(saved_path)
+            raise HTTPException(status_code=402, detail="Monthly page limits exceeded. Please upgrade your subscription.")
+            
         if LANGGRAPH_PIPELINE_AVAILABLE:
             result = run_contract_pipeline(saved_path, request_type="analyze")
             log.info("V2 LangGraph analysis complete")
@@ -665,6 +864,19 @@ async def analyze_document_v2(
             result = analyzer.analyze_document(text)
             result["method"] = "legacy_v1"
             log.info("V2 fallback to v1 analysis")
+            
+        # Log usage & save extractions
+        if current_user.id:
+            log_usage(current_user.id, action="analyze_v2", pages_processed=pages)
+            key_terms = result.get("key_terms", {}) or result.get("extracted_terms", {})
+            conf_scores = result.get("confidence_scores", {})
+            if key_terms:
+                save_extraction_results(
+                    session_id=dh.session_id,
+                    user_id=current_user.id,
+                    extracted_terms=key_terms,
+                    confidence_scores=conf_scores
+                )
         
         return JSONResponse(content=result)
         

@@ -9,6 +9,9 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
+from logger import GLOBAL_LOGGER as log
+from src.database.supabase_client import is_supabase_active, supabase_client
+from src.database.supabase_db import create_profile_if_not_exists
 
 load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -40,8 +43,9 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+    id: Optional[str] = None
 
-# --- Persistent user store (JSON file — replace with PostgreSQL for real production) ---
+# --- Persistent user store (JSON file — fallback when Supabase is disabled) ---
 _USERS_FILE = Path(os.getenv("USERS_DB_PATH", "data/users.json"))
 
 def _load_users() -> dict:
@@ -80,26 +84,58 @@ def decode_token(token: str) -> TokenData:
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        import sys as _dbg
-        print(f"[DEBUG] SECRET_KEY loaded: {bool(SECRET_KEY)} (len={len(SECRET_KEY) if SECRET_KEY else 0})", file=_dbg.stderr)
-        print(f"[DEBUG] Token received: {token[:20]}... (len={len(token)})", file=_dbg.stderr)
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        print(f"[DEBUG] Payload: {payload}", file=_dbg.stderr)
-        email: str = payload.get("sub")
-        if email is None:
-            print("[DEBUG] No 'sub' in payload", file=_dbg.stderr)
+    
+    if is_supabase_active():
+        # Local JWT Decode if secret is provided (fast and serverless-friendly)
+        from src.database.supabase_client import SUPABASE_JWT_SECRET
+        if SUPABASE_JWT_SECRET:
+            try:
+                payload = jwt.decode(
+                    token, 
+                    SUPABASE_JWT_SECRET, 
+                    algorithms=["HS256"], 
+                    audience="authenticated"
+                )
+                email = payload.get("email")
+                user_id = payload.get("sub") # 'sub' is the UUID in Supabase JWTs
+                if email is None or user_id is None:
+                    raise credentials_exception
+                return TokenData(email=email, id=user_id)
+            except JWTError as e:
+                log.warning("Local Supabase JWT decode failed, falling back to API verification", error=str(e))
+        
+        # Fallback: verification via Supabase API
+        try:
+            res = supabase_client.auth.get_user(token)
+            if not res or not res.user:
+                raise credentials_exception
+            return TokenData(email=res.user.email, id=res.user.id)
+        except Exception as e:
+            log.error("Supabase JWT verification failed", error=str(e))
             raise credentials_exception
-        print(f"[DEBUG] Auth OK for: {email}", file=_dbg.stderr)
-        return TokenData(email=email)
-    except JWTError as e:
-        print(f"[DEBUG] JWTError: {e}", file=_dbg.stderr)
-        raise credentials_exception
+    else:
+        # Legacy local JWT validation
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            email: str = payload.get("sub")
+            if email is None:
+                raise credentials_exception
+            # Generate a deterministic user UUID from email in mock mode
+            import hashlib
+            import uuid
+            user_id = str(uuid.UUID(hashlib.md5(email.encode()).hexdigest()))
+            return TokenData(email=email, id=user_id)
+        except JWTError:
+            raise credentials_exception
 
 # --- Auth dependency (use this to protect routes) ---
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> TokenData:
-    return decode_token(token)
+    user_data = decode_token(token)
+    # Ensure a profile row exists in local DB or Supabase profiles table
+    if user_data.id and user_data.email:
+        create_profile_if_not_exists(user_data.id, user_data.email)
+    return user_data
 
 # --- Auth operations ---
 
@@ -109,22 +145,53 @@ def register_user(email: str, password: str) -> dict:
         raise HTTPException(status_code=400, detail="Invalid email format")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    if email in _users_db:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    _users_db[email] = hash_password(password)
-    _save_users(_users_db)
-    return {"message": "User registered successfully", "email": email}
+        
+    if is_supabase_active():
+        try:
+            res = supabase_client.auth.sign_up({"email": email, "password": password})
+            if not res.user:
+                raise HTTPException(status_code=400, detail="Registration failed")
+            create_profile_if_not_exists(res.user.id, email)
+            return {"message": "User registered successfully", "email": email, "id": res.user.id}
+        except Exception as e:
+            log.error("Supabase sign up error", error=str(e))
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        if email in _users_db:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        _users_db[email] = hash_password(password)
+        _save_users(_users_db)
+        return {"message": "User registered successfully", "email": email}
 
 def login_user(email: str, password: str) -> Token:
-    hashed = _users_db.get(email)
-    if not hashed or not verify_password(password, hashed):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    token = create_access_token(data={"sub": email})
-    return Token(access_token=token, token_type="bearer")
+    if is_supabase_active():
+        try:
+            res = supabase_client.auth.sign_in_with_password({"email": email, "password": password})
+            if not res.session:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect email or password",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            create_profile_if_not_exists(res.user.id, email)
+            return Token(access_token=res.session.access_token, token_type="bearer")
+        except Exception as e:
+            log.error("Supabase sign in error", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    else:
+        hashed = _users_db.get(email)
+        if not hashed or not verify_password(password, hashed):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token = create_access_token(data={"sub": email})
+        return Token(access_token=token, token_type="bearer")

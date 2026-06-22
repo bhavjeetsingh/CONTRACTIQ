@@ -30,3 +30,10 @@ easyocr>=1.7.0
 Pillow>=10.0.0
 langgraph>=0.2.0
 reportlab>=4.0.0
+
+# Phase 2 additions — Supabase
+supabase>=2.0.0
+postgrest>=0.10.0
+
+# Phase 3 additions — Razorpay Billing
+razorpay>=1.4.0
