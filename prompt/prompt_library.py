@@ -47,10 +47,60 @@ context_qa_prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
+# Prompt for key-term extraction (Phase 1C)
+key_term_extraction_prompt = ChatPromptTemplate.from_template("""
+You are an expert legal contract analyst. Extract ALL key terms from the following contract.
+
+For each field, provide a confidence score (0.0 to 1.0):
+- 1.0 = clearly stated in the contract
+- 0.5 = inferred from context
+- 0.0 = not found in the document
+
+Return ONLY valid JSON with these fields:
+- parties: [{{"name": "...", "role": "buyer/seller/etc."}}]
+- effective_date, expiration_date, auto_renewal
+- payment_terms: [{{"amount": "...", "currency": "...", "frequency": "...", "due_date": "..."}}]
+- obligations: [{{"party": "...", "description": "...", "deadline": "...", "consequence_of_breach": "..."}}]
+- termination_clauses: ["clause summary"]
+- liability_cap, confidentiality_period, governing_law
+- non_compete: {{"exists": true/false, "duration": "...", "geographic_scope": "..."}}
+- risk_flags: [{{"clause": "...", "risk_level": "low/medium/high/critical", "plain_english": "...", "recommendation": "..."}}]
+- confidence_scores: {{"field_name": 0.0-1.0}}
+
+Do NOT hallucinate. If a term is not in the document, set it to "Not found" with confidence 0.0.
+
+Contract text:
+{document_text}
+""")
+
+# Prompt for extraction validation (self-correction loop)
+validation_prompt = ChatPromptTemplate.from_template("""
+You are a quality assurance analyst reviewing AI-extracted contract terms.
+
+Review the following extraction result and identify:
+1. Any fields that appear incorrect or hallucinated
+2. Any critical fields that are missing
+3. Any confidence scores that seem too high or too low
+
+Previous extraction:
+{extracted_terms}
+
+Original document text (first 5000 chars):
+{document_text_preview}
+
+Return JSON with:
+- "issues": ["list of problems found"]
+- "suggested_fixes": {{"field_name": "corrected_value"}}
+- "overall_quality": 0.0-1.0
+- "should_retry": true/false
+""")
+
 # Central dictionary to register prompts
 PROMPT_REGISTRY = {
     "document_analysis": document_analysis_prompt,
     "document_comparison": document_comparison_prompt,
     "contextualize_question": contextualize_question_prompt,
     "context_qa": context_qa_prompt,
+    "key_term_extraction": key_term_extraction_prompt,
+    "validation": validation_prompt,
 }

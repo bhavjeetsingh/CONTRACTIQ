@@ -25,6 +25,19 @@ from src.auth.jwt_handler import (
 )
 from langchain_core.messages import HumanMessage, AIMessage
 
+# Phase 1: LangGraph pipeline + Key-term extraction + Export
+try:
+    from src.agent.contract_graph import run_contract_pipeline
+    LANGGRAPH_PIPELINE_AVAILABLE = True
+except ImportError:
+    LANGGRAPH_PIPELINE_AVAILABLE = False
+
+try:
+    from src.document_analyzer.key_term_extractor import KeyTermExtractor
+    KEY_TERM_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    KEY_TERM_EXTRACTOR_AVAILABLE = False
+
 FAISS_BASE = os.getenv("FAISS_BASE", "faiss_index")
 UPLOAD_BASE = os.getenv("UPLOAD_BASE", "data")
 FAISS_INDEX_NAME = os.getenv("FAISS_INDEX_NAME", "index")
@@ -501,6 +514,167 @@ async def chat_stream(
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
+# ---------- EXTRACT KEY TERMS (LangGraph Pipeline) ----------
+@limiter.limit("10/minute")
+@app.post("/extract")
+async def extract_key_terms(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: TokenData = Depends(get_current_user),
+) -> Any:
+    """
+    Extract structured key terms from a contract using the LangGraph
+    agentic pipeline with self-correcting extraction.
+    
+    Returns: parties, obligations, payment terms, risk flags,
+    confidence scores, and more.
+    """
+    try:
+        log.info(f"Key-term extraction requested: {file.filename}")
+        
+        file_ext = Path(file.filename or "").suffix.lower()
+        if file_ext not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
+        
+        file_content = await file.read()
+        if len(file_content) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="File too large")
+        await file.seek(0)
+        
+        dh = DocHandler()
+        saved_path = dh.save_document(FastAPIFileAdapter(file))
+        
+        if LANGGRAPH_PIPELINE_AVAILABLE:
+            result = run_contract_pipeline(saved_path, request_type="extract")
+            log.info("LangGraph extraction complete", method="langgraph")
+        elif KEY_TERM_EXTRACTOR_AVAILABLE:
+            text = dh.read_document(saved_path)
+            if not text or not text.strip():
+                raise HTTPException(status_code=400, detail="Document appears empty")
+            extractor = KeyTermExtractor()
+            result = extractor.extract(text)
+            result["method"] = "direct"
+            log.info("Direct extraction complete", method="direct")
+        else:
+            raise HTTPException(status_code=501, detail="Extraction pipeline not available")
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Key-term extraction failed", filename=file.filename)
+        raise HTTPException(status_code=500, detail="Extraction failed. Check server logs.")
+
+
+# ---------- EXPORT ----------
+@app.get("/export/{session_id}/{format}")
+async def export_results(
+    session_id: str,
+    format: str,
+    current_user: TokenData = Depends(get_current_user),
+) -> Any:
+    """
+    Export analysis/extraction results in JSON, CSV, or PDF format.
+    
+    Args:
+        session_id: Session ID from a previous analysis
+        format: Export format — "json", "csv", or "pdf"
+    """
+    try:
+        if format not in ("json", "csv", "pdf"):
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use json, csv, or pdf.")
+        
+        # Get cached results from Redis
+        session_meta = cache.get_rag_session(session_id)
+        if not session_meta:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        
+        if format == "json":
+            from src.export.json_exporter import export_json
+            json_str = export_json(session_meta)
+            return JSONResponse(content={"export": json_str, "format": "json"})
+        
+        elif format == "csv":
+            from src.export.csv_exporter import export_csv
+            csv_str = export_csv(session_meta)
+            from fastapi.responses import Response
+            return Response(
+                content=csv_str,
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename=contractiq_{session_id}.csv"},
+            )
+        
+        elif format == "pdf":
+            from src.export.pdf_exporter import export_pdf
+            pdf_bytes = export_pdf(session_meta)
+            from fastapi.responses import Response
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename=contractiq_{session_id}.pdf"},
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Export failed", session_id=session_id, format=format)
+        raise HTTPException(status_code=500, detail="Export failed. Check server logs.")
+
+
+# ---------- ANALYZE WITH LANGGRAPH ----------
+@limiter.limit("10/minute")
+@app.post("/analyze/v2")
+async def analyze_document_v2(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: TokenData = Depends(get_current_user),
+) -> Any:
+    """
+    V2 analysis endpoint using LangGraph agentic pipeline.
+    
+    Returns both metadata analysis AND key-term extraction
+    with confidence scores and self-correcting validation.
+    Falls back to v1 linear pipeline if LangGraph unavailable.
+    """
+    try:
+        log.info(f"V2 analysis requested: {file.filename}")
+        
+        file_ext = Path(file.filename or "").suffix.lower()
+        if file_ext not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
+        
+        file_content = await file.read()
+        if len(file_content) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="File too large")
+        await file.seek(0)
+        
+        dh = DocHandler()
+        saved_path = dh.save_document(FastAPIFileAdapter(file))
+        
+        if LANGGRAPH_PIPELINE_AVAILABLE:
+            result = run_contract_pipeline(saved_path, request_type="analyze")
+            log.info("V2 LangGraph analysis complete")
+        else:
+            # Fallback to v1
+            text = dh.read_document(saved_path)
+            if not text or not text.strip():
+                raise HTTPException(status_code=400, detail="Document appears empty")
+            from src.document_analyzer.data_analysis import DocumentAnalyzer
+            analyzer = DocumentAnalyzer()
+            result = analyzer.analyze_document(text)
+            result["method"] = "legacy_v1"
+            log.info("V2 fallback to v1 analysis")
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("V2 analysis failed", filename=file.filename)
+        raise HTTPException(status_code=500, detail="Analysis failed. Check server logs.")
+
+
 # evaluation endpoint of ragas
 @app.post("/eval/score")
 @limiter.limit("3/minute")
