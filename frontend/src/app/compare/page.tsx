@@ -212,25 +212,21 @@ export default function ComparePage() {
               <div className="border border-zinc-850 rounded-xl overflow-hidden text-sm">
                 <div className="divide-y divide-zinc-850 bg-zinc-900/10">
                   {/* Table Header */}
-                  <div className="grid grid-cols-4 p-4 font-semibold text-zinc-400 bg-zinc-900/30">
-                    <div>Clause Parameter</div>
-                    <div>Reference Value</div>
-                    <div>Actual Value</div>
-                    <div>Deviation Status</div>
+                  <div className="grid grid-cols-12 p-4 font-semibold text-zinc-400 bg-zinc-900/30">
+                    <div className="col-span-2">Page</div>
+                    <div className="col-span-10">Summary of Changes & Deviations</div>
                   </div>
                   {/* Table Body */}
-                  {rows.map((row, idx) => (
-                    <div key={idx} className="grid grid-cols-4 p-4 items-center text-zinc-300 hover:bg-zinc-900/20 transition-colors">
-                      <div className="font-semibold text-white truncate pr-4">{row.clause}</div>
-                      <div className="text-xs truncate pr-4" title={row.reference_value}>{row.reference_value || "Not specified"}</div>
-                      <div className="text-xs truncate pr-4" title={row.actual_value}>{row.actual_value || "Not specified"}</div>
-                      <div>
-                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${getSeverityBadgeColor(row.severity)}`}>
-                          {row.difference_type || row.severity.replace("_", " ")}
-                        </span>
+                  {rows.map((row: any, idx) => {
+                    const pageVal = row.Page || row.page || "N/A";
+                    const changesVal = row.Changes || row.changes || row.description || "";
+                    return (
+                      <div key={idx} className="grid grid-cols-12 p-4 items-start text-zinc-300 hover:bg-zinc-900/20 transition-colors border-t border-zinc-800">
+                        <div className="col-span-2 font-bold text-primary">Page {pageVal}</div>
+                        <div className="col-span-10 text-sm whitespace-pre-wrap leading-relaxed text-zinc-300">{changesVal}</div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

@@ -781,7 +781,11 @@ async def export_results(
         # Get cached results from Redis
         session_meta = cache.get_rag_session(session_id)
         if not session_meta:
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+            session_meta = get_rag_session(session_id)
+            if session_meta:
+                cache.store_rag_session(session_id, session_meta)
+            else:
+                raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         
         if format == "json":
             from src.export.json_exporter import export_json
@@ -877,6 +881,9 @@ async def analyze_document_v2(
                     extracted_terms=key_terms,
                     confidence_scores=conf_scores
                 )
+            # Save RAG session / metadata for export recovery
+            save_rag_session(dh.session_id, current_user.id, result)
+            cache.store_rag_session(dh.session_id, result)
         
         return JSONResponse(content=result)
         

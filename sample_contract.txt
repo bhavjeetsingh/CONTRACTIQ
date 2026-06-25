@@ -1,0 +1,35 @@
+MUTUAL NON-DISCLOSURE AND CONFIDENTIALITY AGREEMENT
+
+This Mutual Non-Disclosure Agreement (the "Agreement") is entered into as of June 1, 2026 (the "Effective Date"), by and between:
+1. STARK INDUSTRIES INC., a Delaware corporation having its principal place of business at 10880 Wilshire Blvd, Los Angeles, CA ("Disclosing Party"), and
+2. WAYNE ENTERPRISES INC., a Delaware corporation having its principal place of business at 1007 Mountain Drive, Gotham City, NJ ("Receiving Party").
+
+1. PURPOSE
+The parties wish to explore a potential business relationship concerning advanced clean energy fusion systems and nanotech armor plating (the "Purpose"). In connection with the Purpose, either party may disclose proprietary technical or business information to the other.
+
+2. CONFIDENTIAL INFORMATION
+"Confidential Information" means any information disclosed by one party to the other under this Agreement that is marked as confidential or should reasonably be understood to be confidential given the nature of the information. Confidential Information does not include information that: (a) is or becomes publicly known through no breach of this Agreement; (b) was already known to the receiving party; (c) is independently developed without reference to the disclosing party's Confidential Information.
+
+3. OBLIGATIONS OF RECEIVING PARTY
+The Receiving Party shall:
+(a) Hold all Confidential Information in strict confidence and use at least a reasonable standard of care to prevent unauthorized disclosure.
+(b) Use the Confidential Information solely for the Purpose of exploring the business relationship.
+(c) Restrict access to Confidential Information to employees and contractors who need to know and who are bound by confidentiality obligations at least as restrictive as those herein.
+(d) Stark Industries Inc. must deliver technical specifications within 30 days of the Effective Date, failing which a late penalty of $5,000 USD is due on the next billing date of July 1, 2026.
+
+4. TERM AND TERMINATION
+This Agreement shall expire two (2) years from the Effective Date (June 1, 2028). Either party may terminate this Agreement at any time upon thirty (30) days written notice to the other. The confidentiality obligations under this Agreement shall survive termination for a period of five (5) years from the date of disclosure.
+
+5. LIABILITY CAP
+NOTWITHSTANDING ANYTHING ELSE IN THIS AGREEMENT, THE MAXIMUM AGGREGATE LIABILITY OF THE RECEIVING PARTY FOR ANY BREACH OF THIS AGREEMENT SHALL NOT EXCEED $1,000 USD. THIS LIMITATION APPLIES TO ALL CLAIMS, REGARDLESS OF THE LEGAL THEORY INITIATED.
+
+6. GOVERNING LAW AND JURISDICTION
+This Agreement shall be governed by, and construed in accordance with, the laws of the State of California, without regard to its conflict of laws principles. Any legal action arising out of this Agreement shall be brought exclusively in the state or federal courts located in Los Angeles County, California.
+
+IN WITNESS WHEREOF, the parties have executed this Mutual Non-Disclosure Agreement as of the Effective Date.
+
+STARK INDUSTRIES INC.
+By: Anthony Stark (CEO)
+
+WAYNE ENTERPRISES INC.
+By: Bruce Wayne (Chairman)
