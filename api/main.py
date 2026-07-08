@@ -365,6 +365,9 @@ async def chat_build_index(
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
+        print("--- INDEX BUILD ERROR TRACEBACK ---")
+        print(tb)
+        print("-----------------------------------")
         log.exception("Chat index building failed")
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}\n\nTraceback:\n{tb}")
 # ---------- CHAT: QUERY (Hybrid RAG) ----------
@@ -480,6 +483,9 @@ async def chat_query(
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
+        print("--- QUERY ERROR TRACEBACK ---")
+        print(tb)
+        print("-----------------------------")
         log.exception("Chat query failed")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}\n\nTraceback:\n{tb}")
 
