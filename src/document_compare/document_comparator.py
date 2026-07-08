@@ -37,20 +37,51 @@ class DocumentComparatorLLM:
 
     def _format_response(self, response_parsed) -> pd.DataFrame:
         try:
+            # First, check if it's a Pydantic object and convert it to native Python
+            if hasattr(response_parsed, "model_dump"):
+                response_parsed = response_parsed.model_dump()
+            elif hasattr(response_parsed, "dict"):
+                response_parsed = response_parsed.dict()
+
+            data = []
             if isinstance(response_parsed, list):
                 data = response_parsed
             elif isinstance(response_parsed, dict):
-                data = response_parsed.get("changes", response_parsed.get("rows", [response_parsed]))
+                # Check for common list wrapper keys case-insensitively
+                for key in ["changes", "Changes", "rows", "Rows", "root", "Root"]:
+                    if key in response_parsed and isinstance(response_parsed[key], list):
+                        data = response_parsed[key]
+                        break
+                if not data:
+                    data = [response_parsed]
             else:
                 data = []
 
             cleaned = []
             for item in data:
                 if isinstance(item, dict):
-                    cleaned.append({
-                        "Page": str(item.get("Page", item.get("page", ""))),
-                        "Changes": str(item.get("Changes", item.get("changes", "")))
-                    })
+                    page_val = item.get("Page", item.get("page", ""))
+                    changes_val = item.get("Changes", item.get("changes", ""))
+                    
+                    # If changes_val is a list of strings, join it with newlines
+                    if isinstance(changes_val, list):
+                        changes_val = "\n".join(f"• {str(x).lstrip('•- ')}" for x in changes_val)
+                    elif isinstance(changes_val, str):
+                        # Ensure formatting has clean bullet points
+                        lines = [line.strip() for line in changes_val.split("\n") if line.strip()]
+                        formatted_lines = []
+                        for line in lines:
+                            if not line.startswith("•") and not line.startswith("-"):
+                                formatted_lines.append(f"• {line}")
+                            else:
+                                formatted_lines.append(f"• {line.lstrip('•- ')}")
+                        changes_val = "\n".join(formatted_lines)
+
+                    if page_val or changes_val:
+                        cleaned.append({
+                            "Page": str(page_val) if page_val is not None else "",
+                            "Changes": str(changes_val) if changes_val is not None else ""
+                        })
 
             df = pd.DataFrame(cleaned, columns=["Page", "Changes"])
             return df
