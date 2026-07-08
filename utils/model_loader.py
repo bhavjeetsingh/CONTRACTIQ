@@ -83,9 +83,29 @@ class ModelLoader:
             log.info("Returning cached embedding model")
             return _embeddings_cache
 
+        # Check if Google key is available to use high-performance, low-memory API embeddings (primary for cloud)
+        google_api_key = None
+        try:
+            google_api_key = self.api_key_mgr.get("GOOGLE_API_KEY")
+        except Exception:
+            pass
+
+        if google_api_key:
+            try:
+                model_name = self.config.get("embedding_model", {}).get("model_name", "models/embedding-001")
+                log.info("Loading high-performance Google Gemini embedding model (primary)", model=model_name)
+                _embeddings_cache = GoogleGenerativeAIEmbeddings(
+                    model=model_name,
+                    google_api_key=google_api_key
+                )
+                return _embeddings_cache
+            except Exception as google_error:
+                log.warning("Google embedding initialization failed, falling back to HuggingFace", error=str(google_error))
+
+        # Fallback to local HuggingFace (heavy, requires PyTorch & substantial RAM)
         try:
             from langchain_community.embeddings import HuggingFaceEmbeddings
-            log.info("Loading HuggingFace BGE embedding model (primary)")
+            log.info("Loading local HuggingFace BGE embedding model (fallback)")
             _embeddings_cache = HuggingFaceEmbeddings(
                 model_name="BAAI/bge-small-en-v1.5",
                 model_kwargs={"device": "cpu"},
@@ -93,17 +113,7 @@ class ModelLoader:
             )
             return _embeddings_cache
         except Exception as hf_error:
-            log.warning("HuggingFace embedding failed, attempting Google fallback", error=str(hf_error))
-            
-        try:
-            model_name = self.config["embedding_model"]["model_name"]
-            log.info("Loading embedding model (Google fallback)", model=model_name)
-            _embeddings_cache = GoogleGenerativeAIEmbeddings(model=model_name,
-                                                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"))
-            return _embeddings_cache
-        except Exception as google_error:
-            log.error("Both HuggingFace and Google embedding models failed", 
-                     huggingface_error=str(hf_error), google_error=str(google_error))
+            log.error("Both Google and HuggingFace embedding models failed to load", hf_error=str(hf_error))
             raise DocumentPortalException("Failed to load any embedding model", sys)
 
     def load_llm(self, provider_key: str | None = None):
