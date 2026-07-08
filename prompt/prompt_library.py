@@ -19,8 +19,9 @@ You are a legal document comparison expert. Compare the two documents provided a
 Reference Document:
 {combined_docs}
 
-Provide a page-by-page comparison. If a page has no changes, state 'NO CHANGE'.
+Provide a page-by-page comparison. In the JSON response, format the 'Changes' value as a clean, bullet-pointed list (e.g. using '•' for each point) listing all the differences on that page. If a page has no changes, set the 'Changes' string to 'NO CHANGE'.
 """)
+
 
 # Prompt for contextual question rewriting
 contextualize_question_prompt = ChatPromptTemplate.from_messages([
