@@ -1,0 +1,8 @@
+# Ignore parent backend directories from the frontend build context
+../api/
+../requirements.txt
+../.venv/
+../data/
+../Procfile
+../render.yaml
+../railway.json
