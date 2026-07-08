@@ -363,8 +363,10 @@ async def chat_build_index(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         log.exception("Chat index building failed")
-        raise HTTPException(status_code=500, detail="Indexing failed. Check server logs for details.")
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}\n\nTraceback:\n{tb}")
 # ---------- CHAT: QUERY (Hybrid RAG) ----------
 @limiter.limit("20/minute")
 @app.post("/chat/query")
@@ -476,8 +478,10 @@ async def chat_query(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         log.exception("Chat query failed")
-        raise HTTPException(status_code=500, detail="Query failed. Check server logs for details.")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}\n\nTraceback:\n{tb}")
 
 # ---------- CHAT: CLEAR HISTORY ----------
 @app.post("/chat/new")
