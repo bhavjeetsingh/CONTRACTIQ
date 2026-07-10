@@ -24,7 +24,8 @@ Documents to Compare:
 Instructions:
 1. Provide a page-by-page comparison of the differences between the Reference Document and the Actual Document.
 2. In the JSON response, list the deviations as an array/list of strings or a single string under the 'Changes' key.
-3. If a page has no changes, set 'Changes' to 'NO CHANGE'.
+3. Do NOT output the schema definitions, descriptions, types, or $defs. Output ONLY the actual JSON data representing the differences found.
+4. If a page has no changes, set 'Changes' to 'NO CHANGE'.
 """)
 
 
