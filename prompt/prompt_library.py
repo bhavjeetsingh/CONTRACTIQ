@@ -12,14 +12,19 @@ Analyze this document:
 
 # Prompt for document comparison
 document_comparison_prompt = ChatPromptTemplate.from_template("""
-You are a legal document comparison expert. Compare the two documents provided and identify ALL differences.
+You are a legal document comparison expert. 
+
+Compare the reference document against the actual/redlined document and identify all differences, changes, and deviations.
 
 {format_instruction}
 
-Reference Document:
+Documents to Compare:
 {combined_docs}
 
-Provide a page-by-page comparison. In the JSON response, format the 'Changes' value as a clean, bullet-pointed list (e.g. using '•' for each point) listing all the differences on that page. If a page has no changes, set the 'Changes' string to 'NO CHANGE'.
+Instructions:
+1. Provide a page-by-page comparison of the differences between the Reference Document and the Actual Document.
+2. In the JSON response, list the deviations as an array/list of strings or a single string under the 'Changes' key.
+3. If a page has no changes, set 'Changes' to 'NO CHANGE'.
 """)
 
 

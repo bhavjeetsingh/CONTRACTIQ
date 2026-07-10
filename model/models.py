@@ -18,7 +18,7 @@ class Metadata(BaseModel):
 
 class ChangeFormat(BaseModel):
     Page: str
-    Changes: str
+    Changes: Union[str, List[str]]
 
 class SummaryResponse(RootModel[list[ChangeFormat]]):
     pass

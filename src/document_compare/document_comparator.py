@@ -62,19 +62,34 @@ class DocumentComparatorLLM:
                 if isinstance(item, dict):
                     page_val = item.get("Page", item.get("page", ""))
                     changes_val = item.get("Changes", item.get("changes", ""))
-                    
-                    # If changes_val is a list of strings, join it with newlines
+                    # If changes_val is a dictionary (common parser quirk), extract its value
+                    if isinstance(changes_val, dict):
+                        changes_val = changes_val.get("value", changes_val.get("Changes", changes_val.get("changes", str(changes_val))))
+
+                    # If changes_val is a list, format each as a bullet point
                     if isinstance(changes_val, list):
-                        changes_val = "\n".join(f"• {str(x).lstrip('•- ')}" for x in changes_val)
+                        formatted_list = []
+                        for x in changes_val:
+                            x_str = str(x).strip()
+                            sub_parts = [part.strip() for part in x_str.split("•") if part.strip()]
+                            if not sub_parts:
+                                sub_parts = [x_str]
+                            for part in sub_parts:
+                                clean_part = part.lstrip("•- ")
+                                if clean_part:
+                                    formatted_list.append(f"• {clean_part}")
+                        changes_val = "\n".join(formatted_list)
                     elif isinstance(changes_val, str):
-                        # Ensure formatting has clean bullet points
-                        lines = [line.strip() for line in changes_val.split("\n") if line.strip()]
+                        raw_lines = [line.strip() for line in changes_val.split("\n") if line.strip()]
                         formatted_lines = []
-                        for line in lines:
-                            if not line.startswith("•") and not line.startswith("-"):
-                                formatted_lines.append(f"• {line}")
-                            else:
-                                formatted_lines.append(f"• {line.lstrip('•- ')}")
+                        for raw_line in raw_lines:
+                            sub_lines = [part.strip() for part in raw_line.split("•") if part.strip()]
+                            if not sub_lines:
+                                sub_lines = [raw_line]
+                            for sub_line in sub_lines:
+                                clean_line = sub_line.lstrip("•- ")
+                                if clean_line:
+                                    formatted_lines.append(f"• {clean_line}")
                         changes_val = "\n".join(formatted_lines)
 
                     if page_val or changes_val:
