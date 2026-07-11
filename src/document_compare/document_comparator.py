@@ -35,6 +35,40 @@ class DocumentComparatorLLM:
             log.error("Error in compare_documents", error=str(e))
             raise DocumentPortalException("Error comparing documents", sys)
 
+    def _is_no_change_text(self, text: str) -> bool:
+        """Helper to detect if a text represents a 'no change' statement."""
+        clean = text.lower().replace("•", "").replace("-", "").strip().rstrip(".")
+        no_change_phrases = {
+            "no change",
+            "no changes",
+            "no changes detected",
+            "no changes found",
+            "no change detected",
+            "no change found",
+            "no deviation",
+            "no deviations",
+            "no modification",
+            "no modifications",
+            "no difference",
+            "no differences",
+            "remains the same",
+            "remain the same",
+            "remains unchanged",
+            "remain unchanged",
+            "same as reference",
+            "same as the reference",
+            "same as original",
+            "same as the original",
+            "unchanged",
+            "nothing changed",
+            "not changed"
+        }
+        if clean in no_change_phrases:
+            return True
+        if clean.endswith("remains the same") or clean.endswith("remain the same") or clean.endswith("remains unchanged") or clean.endswith("remain unchanged"):
+            return True
+        return False
+
     def _format_response(self, response_parsed) -> pd.DataFrame:
         try:
             # First, check if it's a Pydantic object and convert it to native Python
@@ -76,7 +110,7 @@ class DocumentComparatorLLM:
                                 sub_parts = [x_str]
                             for part in sub_parts:
                                 clean_part = part.lstrip("•- ")
-                                if clean_part:
+                                if clean_part and not self._is_no_change_text(clean_part):
                                     formatted_list.append(f"• {clean_part}")
                         changes_val = "\n".join(formatted_list)
                     elif isinstance(changes_val, str):
@@ -88,11 +122,11 @@ class DocumentComparatorLLM:
                                 sub_lines = [raw_line]
                             for sub_line in sub_lines:
                                 clean_line = sub_line.lstrip("•- ")
-                                if clean_line:
+                                if clean_line and not self._is_no_change_text(clean_line):
                                     formatted_lines.append(f"• {clean_line}")
                         changes_val = "\n".join(formatted_lines)
 
-                    if page_val or changes_val:
+                    if page_val and changes_val.strip():
                         cleaned.append({
                             "Page": str(page_val) if page_val is not None else "",
                             "Changes": str(changes_val) if changes_val is not None else ""
