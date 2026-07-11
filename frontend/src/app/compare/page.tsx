@@ -213,7 +213,7 @@ export default function ComparePage() {
                 <div className="divide-y divide-zinc-850 bg-zinc-900/10">
                   {/* Table Header */}
                   <div className="grid grid-cols-12 p-4 font-semibold text-zinc-400 bg-zinc-900/30">
-                    <div className="col-span-2">Page</div>
+                    <div className="col-span-2">Section / Location</div>
                     <div className="col-span-10">Summary of Changes & Deviations</div>
                   </div>
                   {/* Table Body */}
@@ -222,7 +222,7 @@ export default function ComparePage() {
                     const changesVal = row.Changes || row.changes || row.description || "";
                     return (
                       <div key={idx} className="grid grid-cols-12 p-4 items-start text-zinc-300 hover:bg-zinc-900/20 transition-colors border-t border-zinc-800">
-                        <div className="col-span-2 font-bold text-primary">Page {pageVal}</div>
+                        <div className="col-span-2 font-bold text-primary">{pageVal}</div>
                         <div className="col-span-10 text-sm whitespace-pre-wrap leading-relaxed text-zinc-300">{changesVal}</div>
                       </div>
                     );

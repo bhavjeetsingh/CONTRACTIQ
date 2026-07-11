@@ -95,16 +95,7 @@ class DocumentComparatorLLM:
             for item in data:
                 if isinstance(item, dict):
                     page_val = item.get("Page", item.get("page", ""))
-                    if page_val is not None:
-                        page_val_str = str(page_val).strip()
-                        import re
-                        match = re.search(r'\d+', page_val_str)
-                        if match:
-                            page_val = match.group(0)
-                        else:
-                            page_val = page_val_str
-                    else:
-                        page_val = ""
+                    page_val = str(page_val).strip() if page_val is not None else ""
                     changes_val = item.get("Changes", item.get("changes", ""))
                     # If changes_val is a dictionary (common parser quirk), extract its value
                     if isinstance(changes_val, dict):

@@ -22,10 +22,11 @@ Documents to Compare:
 {combined_docs}
 
 Instructions:
-1. Provide a page-by-page comparison of the differences between the Reference Document and the Actual Document.
-2. In the JSON response, list the deviations as an array/list of strings or a single string under the 'Changes' key.
-3. Do NOT output the schema definitions, descriptions, types, or $defs. Output ONLY the actual JSON data representing the differences found.
-4. If a page has no changes, set 'Changes' to 'NO CHANGE'.
+1. Provide a section-by-section or page-by-page comparison of the differences between the Reference Document and the Actual Document.
+2. In the 'Page' field of the JSON response, specify the section, clause name, or page number where the change occurs (e.g., "Section 1", "Clause 3", or "Page 2").
+3. In the JSON response, list the deviations as an array/list of strings or a single string under the 'Changes' key.
+4. Do NOT output the schema definitions, descriptions, types, or $defs. Output ONLY the actual JSON data representing the differences found.
+5. If a section/page has no changes, set 'Changes' to 'NO CHANGE'.
 """)
 
 
