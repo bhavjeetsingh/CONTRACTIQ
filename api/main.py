@@ -86,13 +86,29 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",")
+    if origin.strip()
+]
 allow_all = "*" in ALLOWED_ORIGINS
+
+if allow_all:
+    # If ALLOWED_ORIGINS contains "*", we use a regex pattern that matches any origin.
+    # This allows setting allow_credentials=True, which is required for custom headers
+    # like Authorization in frontend requests.
+    allow_origin_regex = r"https?://.*"
+    allow_origins = []
+else:
+    allow_origin_regex = None
+    allow_origins = ALLOWED_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if allow_all else ALLOWED_ORIGINS,
-    allow_credentials=not allow_all,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_origins=allow_origins,
+    allow_origin_regex=allow_origin_regex,
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
